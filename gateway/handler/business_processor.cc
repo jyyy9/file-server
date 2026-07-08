@@ -1,4 +1,5 @@
 #include "gateway/handler/business_processor.h"
+#include "protocol/encoder.h"
 #include "common/logger.h"
 
 namespace fileserver {
@@ -18,7 +19,9 @@ void BusinessProcessor::SetTaskHandler(const TaskHandler& handler) {
 }
 
 // ── 获取消息回调 ─────────────────────────────────────────────────
-std::function<void(const TcpConnectionPtr&, Buffer*, Timestamp)>
+std::function<void(const muduo::net::TcpConnectionPtr&,
+                     muduo::net::Buffer*,
+                     muduo::Timestamp)>
 BusinessProcessor::GetMessageCallback() {
     return std::bind(&BusinessProcessor::OnMessage, this,
                      std::placeholders::_1,
