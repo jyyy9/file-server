@@ -25,3 +25,12 @@ add_executable(client_test client_test.cc)
 target_link_libraries(client_test
     pthread
 )
+
+# 协议模块测试（粘包/半包）
+add_executable(protocol_test protocol_test.cc)
+
+target_link_libraries(protocol_test
+    protocol
+    common
+    pthread
+)

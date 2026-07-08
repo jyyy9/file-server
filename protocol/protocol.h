@@ -1,30 +1,27 @@
 #ifndef FILESERVER_PROTOCOL_PROTOCOL_H_
 #define FILESERVER_PROTOCOL_PROTOCOL_H_
 
-// ── 协议模块（预留）──────────────────────────────────────────────
+// ── 协议模块 ─────────────────────────────────────────────────────
+// 基于二进制头 + JSON Body + Binary Data 的自定义应用层协议
 //
-// 本模块实现基于长度前缀的自定义JSON应用层协议：
+// 协议格式:
+//   +----------------------+
+//   | MessageHeader (24B)  |  魔数 + 版本 + 类型 + 长度 + 校验
+//   +----------------------+
+//   | JSON Body            |  变长, JSON 格式
+//   +----------------------+
+//   | Binary Data          |  变长, 二进制文件数据
+//   +----------------------+
 //
-//   +--------------+--------------+--------------+
-//   | 长度 (4字节)  | JSON 消息体   | 二进制数据    |
-//   +--------------+--------------+--------------+
-//
-// 职责：
-//   - 消息编解码（JSON <-> 字节流）
-//   - TCP粘包/半包处理
-//   - 命令路由（login, upload_start, upload_data 等）
-//
-// 待实现的核心类：
-//   - JsonCodec     – JSON消息编解码器
-//   - Message       – 一条请求/响应的内存表示
-//   - LengthHeader  – 4字节大端序长度头
+// 核心类:
+//   - MessageHeader  – 24字节定长消息头（魔数、长度、CRC32）
+//   - Message        – 完整消息（header + json_body + binary_data）
+//   - Encoder        – 序列化 Message → 网络字节流
+//   - Decoder        – 反序列化（状态机，处理粘包/半包）
 
-namespace fileserver {
-namespace protocol {
-
-// 预留，后续阶段实现
-
-}  // namespace protocol
-}  // namespace fileserver
+#include "protocol/message_header.h"
+#include "protocol/message.h"
+#include "protocol/encoder.h"
+#include "protocol/decoder.h"
 
 #endif  // FILESERVER_PROTOCOL_PROTOCOL_H_
