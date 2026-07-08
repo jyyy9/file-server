@@ -26,44 +26,50 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 endif()
 
 # ── muduo 网络库 ──────────────────────────────────────────────────
-# muduo 是 Linux 专用网络库，需提前安装。
-# 使用方式: cmake .. -DMUDUO_INSTALL_DIR=~/muduo/build/release-install-cpp11
-# 安装步骤:
+# muduo 是 Linux 专用网络库。
+# 推荐安装到项目 third_party/ 目录下（自包含）：
+#   cd third_party
 #   git clone https://github.com/chenshuo/muduo.git
 #   cd muduo && ./build.sh install
+# CMake 会优先查找 ${PROJECT_SOURCE_DIR}/third_party/muduo/build/release-install-cpp11
+# 也可通过 -DMUDUO_INSTALL_DIR=<path> 指定自定义路径
 if(UNIX)
-    set(MUDUO_INSTALL_DIR "" CACHE PATH "muduo 安装路径 (例如: ~/muduo/build/release-install-cpp11)")
+    set(MUDUO_DEFAULT_DIR ${PROJECT_SOURCE_DIR}/third_party/muduo/build/release-install-cpp11)
+    set(MUDUO_INSTALL_DIR "" CACHE PATH "muduo 安装路径（留空则自动查找）")
 
+    # ── 确定 muduo 路径 ──────────────────────────────────────────
     if(MUDUO_INSTALL_DIR)
-        # 用户指定了 muduo 安装路径
-        set(MUDUO_INCLUDE_DIR ${MUDUO_INSTALL_DIR}/include)
-        set(MUDUO_LIB_DIR     ${MUDUO_INSTALL_DIR}/lib)
-
-        if(EXISTS ${MUDUO_INCLUDE_DIR} AND EXISTS ${MUDUO_LIB_DIR})
-            include_directories(${MUDUO_INCLUDE_DIR})
-            link_directories(${MUDUO_LIB_DIR})
-            message(STATUS "muduo 路径: ${MUDUO_INSTALL_DIR}")
-        else()
-            message(WARNING "muduo 路径无效，请检查 -DMUDUO_INSTALL_DIR=${MUDUO_INSTALL_DIR}")
-        endif()
+        set(MUDUO_SEARCH_DIRS ${MUDUO_INSTALL_DIR})
     else()
-        # 未指定路径: 尝试自动查找
-        message(STATUS "未指定 MUDUO_INSTALL_DIR，尝试自动查找 muduo...")
-        find_path(MUDUO_INCLUDE_DIR muduo/net/TcpServer.h
-            PATHS /usr/include /usr/local/include
-                  $ENV{HOME}/muduo/build/release-install-cpp11/include)
-        find_library(MUDUO_NET_LIB muduo_net
-            PATHS /usr/lib /usr/local/lib
-                  $ENV{HOME}/muduo/build/release-install-cpp11/lib)
-        if(MUDUO_INCLUDE_DIR AND MUDUO_NET_LIB)
-            include_directories(${MUDUO_INCLUDE_DIR})
-            get_filename_component(MUDUO_LIB_DIR ${MUDUO_NET_LIB} DIRECTORY)
-            link_directories(${MUDUO_LIB_DIR})
-            message(STATUS "找到 muduo: include=${MUDUO_INCLUDE_DIR}, lib=${MUDUO_LIB_DIR}")
-        else()
-            message(WARNING "未找到 muduo！请通过 -DMUDUO_INSTALL_DIR=<path> 指定安装路径")
-            message(WARNING "安装: git clone https://github.com/chenshuo/muduo.git && cd muduo && ./build.sh install")
-        endif()
+        # 优先查找项目自带的 third_party/muduo
+        set(MUDUO_SEARCH_DIRS
+            ${MUDUO_DEFAULT_DIR}                       # 项目自带
+            /usr/local                                  # 系统安装
+            /usr
+            $ENV{HOME}/muduo/build/release-install-cpp11)
+    endif()
+
+    find_path(MUDUO_INCLUDE_DIR muduo/net/TcpServer.h
+        PATHS ${MUDUO_SEARCH_DIRS}
+        PATH_SUFFIXES include)
+
+    find_library(MUDUO_NET_LIB muduo_net
+        PATHS ${MUDUO_SEARCH_DIRS}
+        PATH_SUFFIXES lib)
+
+    if(MUDUO_INCLUDE_DIR AND MUDUO_NET_LIB)
+        include_directories(${MUDUO_INCLUDE_DIR})
+        get_filename_component(MUDUO_LIB_DIR ${MUDUO_NET_LIB} DIRECTORY)
+        link_directories(${MUDUO_LIB_DIR})
+        message(STATUS "找到 muduo: ${MUDUO_INCLUDE_DIR}")
+    else()
+        message(FATAL_ERROR
+            "未找到 muduo 库！请先安装:\n"
+            "  mkdir -p third_party && cd third_party\n"
+            "  git clone https://github.com/chenshuo/muduo.git\n"
+            "  cd muduo && ./build.sh install\n"
+            "  cd ../.. && rm -rf build && mkdir build && cd build && cmake .. && make\n"
+            "或指定自定义路径: cmake .. -DMUDUO_INSTALL_DIR=/path/to/muduo/build/release-install-cpp11")
     endif()
 endif()
 
