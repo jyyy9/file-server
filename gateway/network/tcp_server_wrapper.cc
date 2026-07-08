@@ -46,8 +46,9 @@ void TcpServerWrapper::Start() {
 }
 
 void TcpServerWrapper::Stop() {
+    // muduo TcpServer 没有 stop() 方法
+    // 停止服务通过 EventLoop::quit() 实现，server 随 EventLoop 停止而释放
     if (!started_) return;
-    server_.stop();
     started_ = false;
     LOG_INFO("TcpServerWrapper 已停止");
 }

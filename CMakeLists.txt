@@ -18,7 +18,7 @@ message(STATUS "FileServer 编译类型: ${CMAKE_BUILD_TYPE}")
 
 # ── Debug / Release 编译标志 ─────────────────────────────────────
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-    add_compile_options(-g -O0 -Wall -Wextra -Wpedantic)
+    add_compile_options(-g -O0 -Wall -Wextra)
     message(STATUS "Debug 模式: -g -O0 -Wall -Wextra")
 elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     add_compile_options(-O2 -DNDEBUG)
