@@ -42,8 +42,8 @@ MYSQL* MysqlPool::CreateConnection() {
         return nullptr;
     }
 
-    // 设置自动重连
-    my_bool reconnect = 1;
+    // 设置自动重连 (MySQL 8.0+ 用 bool, 旧版用 my_bool)
+    bool reconnect = true;
     mysql_options(conn, MYSQL_OPT_RECONNECT, &reconnect);
 
     if (!mysql_real_connect(conn, host_.c_str(), user_.c_str(),
