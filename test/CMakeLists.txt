@@ -26,6 +26,15 @@ target_link_libraries(client_test
     pthread
 )
 
+# 线程池压力测试（10000 任务）
+add_executable(threadpool_stress_test threadpool_stress_test.cc)
+
+target_link_libraries(threadpool_stress_test
+    threadpool
+    common
+    pthread
+)
+
 # 协议模块测试（粘包/半包）
 add_executable(protocol_test protocol_test.cc)
 
