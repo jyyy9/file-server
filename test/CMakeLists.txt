@@ -43,3 +43,13 @@ target_link_libraries(protocol_test
     common
     pthread
 )
+
+# 用户认证测试（注册/登录/验证token）
+add_executable(user_auth_test user_auth_test.cc)
+
+target_link_libraries(user_auth_test
+    database
+    services
+    common
+    pthread
+)

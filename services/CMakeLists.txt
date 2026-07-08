@@ -1,9 +1,16 @@
-# ── services 业务服务模块（预留）─────────────────────────────────
-# 未来将包含: UserService, FileService, StorageService
-set(SERVICES_HEADERS
-    services.h
+# ── services 业务服务模块 ────────────────────────────────────────
+# UserService, FileService, StorageService
+
+set(SERVICES_SOURCES
+    user_service.cc
 )
 
-add_library(services STATIC ${SERVICES_HEADERS})
+set(SERVICES_HEADERS
+    services.h
+    user_service.h
+)
+
+add_library(services STATIC ${SERVICES_SOURCES} ${SERVICES_HEADERS})
+
 target_include_directories(services PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(services common database storage)
