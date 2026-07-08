@@ -13,7 +13,7 @@ using namespace fileserver;
 static void TestLogger() {
     std::cout << "\n=== 测试: 日志模块 ===\n" << std::endl;
 
-    LOG_DEBUG("这是一条调试信息");
+    LOG_DEBUG("这是一条调试信息");//宏，预处理会把LOG_DEBUG替换为Logger::Instance().Log(LogLevel::kDebug, "test/main.cpp", 16, "TestLogger", "这是一条调试信息");
     LOG_INFO("这是一条普通信息");
     LOG_WARNING("这是一条警告信息");
     LOG_ERROR("这是一条错误信息");
@@ -22,6 +22,8 @@ static void TestLogger() {
     LOG_STREAM(Info) << "流式日志: answer = " << 42;
 
     // 测试日志级别过滤
+    //把日志级别调到 kWarning。Logger::Instance() 获取日志单例——全局只有一个 Logger 对象，不管在哪里调用拿到的都是同一个
+    //级别从低到高：DEBUG → INFO → WARNING → ERROR → FATAL
     Logger::Instance().SetLevel(LogLevel::kWarning);
     LOG_DEBUG("这条调试信息不应该出现");
     LOG_WARNING("这条警告信息应该出现");
@@ -37,6 +39,7 @@ static void TestLogger() {
 static void TestCommon() {
     std::cout << "\n=== 测试: 公共模块 ===\n" << std::endl;
 
+    //打印三个常量，验证 common.h 里的常量定义能被正确引用到。
     std::cout << "默认端口          = " << kDefaultPort << std::endl;
     std::cout << "缓冲区大小        = " << kBufferSize << std::endl;
     std::cout << "默认分块大小      = " << kDefaultChunkSize << std::endl;
@@ -53,12 +56,13 @@ static void TestCommon() {
 static void TestThreadPool() {
     std::cout << "\n=== 测试: 线程池 ===\n" << std::endl;
 
+    // 创建一个包含 4 个工作线程的线程池
     ThreadPool pool(4);
     std::cout << "工作线程数: " << pool.WorkerCount() << std::endl;
 
     // 提交几个简单任务
     auto future1 = pool.Submit([]() -> int {
-        LOG_INFO("任务1 在工作线程上运行");
+        LOG_INFO("任务1 在工作线程上运行");// 这里的 LOG_INFO 宏会把日志输出到控制台，显示任务1在工作线程上运行
         return 100;
     });
 
@@ -78,6 +82,7 @@ static void TestThreadPool() {
     assert(future3.get() == "hello from threadpool");
 
     // 批量提交任务，测试并发执行
+    //创建 20 个 future 的容器（动态数组），用来装 20 个异步结果。
     const int kNumTasks = 20;
     std::vector<std::future<int>> futures;
     for (int i = 0; i < kNumTasks; ++i) {
@@ -88,7 +93,7 @@ static void TestThreadPool() {
     }
 
     for (int i = 0; i < kNumTasks; ++i) {
-        assert(futures[i].get() == i * i);
+        assert(futures[i].get() == i * i);// 这里的 get() 会阻塞，直到对应的任务完成并返回结果
     }
 
     std::cout << "\n[通过] 线程池测试 (" << kNumTasks << " 个任务)\n" << std::endl;

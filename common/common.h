@@ -52,7 +52,7 @@ enum class FileStatus : int32_t {
 constexpr int32_t kDefaultPort         = 8080;                  // 默认监听端口
 constexpr int32_t kMaxConnectionCount  = 65536;                 // 最大连接数
 constexpr int32_t kBufferSize          = 4096;                  // 默认缓冲区大小
-constexpr int32_t kDefaultChunkSize    = 4 * 1024 * 1024;       // 默认分块大小 4MB
+constexpr int32_t kDefaultChunkSize    = 4 * 1024 * 1024;       // 默认分块大小 4MB，太小了请求太多开销大，太大了内存吃不消，4MB 是个折中值。
 constexpr const char* kDefaultLogFile  = "fileserver.log";      // 默认日志文件
 
 }  // namespace fileserver
