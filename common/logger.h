@@ -11,6 +11,8 @@
 #include <iomanip>
 #include <thread>
 
+#include "common/common.h"
+
 namespace fileserver {
 
 // ── 日志级别 ─────────────────────────────────────────────────────
