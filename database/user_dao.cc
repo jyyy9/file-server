@@ -137,7 +137,7 @@ UserPtr UserDAO::FindByUsername(const std::string& username) {
     MYSQL_BIND result[5];
     std::memset(result, 0, sizeof(result));
     unsigned long name_len, pass_len, token_len, time_len;
-    my_bool is_null[5] = {0};
+    bool is_null[5] = {0};
 
     result[0].buffer_type = MYSQL_TYPE_LONGLONG;
     result[0].buffer       = &id;

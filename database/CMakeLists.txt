@@ -4,6 +4,7 @@
 set(DATABASE_SOURCES
     mysql_pool.cc
     user_dao.cc
+    file_dao.cc
 )
 
 set(DATABASE_HEADERS
@@ -11,6 +12,8 @@ set(DATABASE_HEADERS
     user.h
     mysql_pool.h
     user_dao.h
+    file_info.h
+    file_dao.h
 )
 
 add_library(database STATIC ${DATABASE_SOURCES} ${DATABASE_HEADERS})

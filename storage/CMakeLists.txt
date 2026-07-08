@@ -1,9 +1,15 @@
-# ── storage 存储模块（预留）──────────────────────────────────────
-# 未来将包含: FileManager, ChunkManager 磁盘IO
-set(STORAGE_HEADERS
-    storage.h
+# ── storage 存储模块 ─────────────────────────────────────────────
+# 磁盘文件读写（chunk 级别，不一次性加载整个文件到内存）
+
+set(STORAGE_SOURCES
+    storage_manager.cc
 )
 
-add_library(storage STATIC ${STORAGE_HEADERS})
+set(STORAGE_HEADERS
+    storage.h
+    storage_manager.h
+)
+
+add_library(storage STATIC ${STORAGE_SOURCES} ${STORAGE_HEADERS})
 target_include_directories(storage PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(storage common)

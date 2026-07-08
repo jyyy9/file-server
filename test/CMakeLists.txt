@@ -53,3 +53,16 @@ target_link_libraries(user_auth_test
     common
     pthread
 )
+
+# 文件管理服务测试（上传/下载/删除/查询）
+add_executable(file_service_test file_service_test.cc)
+
+target_link_libraries(file_service_test
+    database
+    storage
+    services
+    common
+    ssl
+    crypto
+    pthread
+)

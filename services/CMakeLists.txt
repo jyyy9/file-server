@@ -3,11 +3,13 @@
 
 set(SERVICES_SOURCES
     user_service.cc
+    file_service.cc
 )
 
 set(SERVICES_HEADERS
     services.h
     user_service.h
+    file_service.h
 )
 
 add_library(services STATIC ${SERVICES_SOURCES} ${SERVICES_HEADERS})
