@@ -4,23 +4,25 @@
 #include <thread>
 #include <fstream>
 #include <cstdio>
-#include <openssl/md5.h>
+#include <openssl/evp.h>
 
 namespace fileserver {
 namespace client {
 
-// ── 计算文件 MD5 ─────────────────────────────────────────────────
+// ── 计算文件 MD5（OpenSSL 3.0 EVP API）──────────────────────────
 std::string FileClient::ComputeFileMD5(const std::string& filepath) {
-    unsigned char digest[MD5_DIGEST_LENGTH];
-    MD5_CTX ctx;
-    MD5_Init(&ctx);
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(ctx, EVP_md5(), nullptr);
     std::ifstream fs(filepath, std::ios::binary);
     char buf[8192];
     while (fs.read(buf, sizeof(buf)) || fs.gcount() > 0)
-        MD5_Update(&ctx, buf, fs.gcount());
-    MD5_Final(digest, &ctx);
+        EVP_DigestUpdate(ctx, buf, fs.gcount());
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len = 0;
+    EVP_DigestFinal_ex(ctx, digest, &digest_len);
+    EVP_MD_CTX_free(ctx);
     char hex[33];
-    for (int i = 0; i < MD5_DIGEST_LENGTH; ++i)
+    for (unsigned int i = 0; i < digest_len; ++i)
         snprintf(hex + i*2, 3, "%02x", digest[i]);
     return hex;
 }

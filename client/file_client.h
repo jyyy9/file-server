@@ -29,8 +29,15 @@ struct ClientResponse {
     int         code = 0;
     std::string msg;
     nlohmann::json data;
-    std::string binary_data;  // 下载/上传等返回的二进制数据
-    bool        ok() const { return code == 0; }
+    std::string binary_data;
+
+    ClientResponse() = default;
+    ClientResponse(int c, const std::string& m,
+                   const nlohmann::json& d = nlohmann::json::object(),
+                   const std::string& b = "")
+        : code(c), msg(m), data(d), binary_data(b) {}
+
+    bool ok() const { return code == 0; }
 };
 
 // ── 文件客户端 ───────────────────────────────────────────────────

@@ -7,7 +7,7 @@
 #include <iomanip>
 #include <sstream>
 
-#include <openssl/md5.h>
+#include <openssl/evp.h>
 
 #include "database/mysql_pool.h"
 #include "database/file_dao.h"
@@ -32,20 +32,21 @@ const int64_t kChunkSize    = 4 * 1024 * 1024;   // 4 MB
 
 // ── 计算文件 MD5 ─────────────────────────────────────────────────
 static std::string FileMD5(const std::string& filepath) {
-    unsigned char digest[MD5_DIGEST_LENGTH];
-    MD5_CTX ctx;
-    MD5_Init(&ctx);
+    EVP_MD_CTX* ctx = EVP_MD_CTX_new();
+    EVP_DigestInit_ex(ctx, EVP_md5(), nullptr);
 
     std::ifstream fs(filepath, std::ios::binary);
     char buf[8192];
-    while (fs.read(buf, sizeof(buf)) || fs.gcount() > 0) {
-        MD5_Update(&ctx, buf, fs.gcount());
-    }
+    while (fs.read(buf, sizeof(buf)) || fs.gcount() > 0)
+        EVP_DigestUpdate(ctx, buf, fs.gcount());
 
-    MD5_Final(digest, &ctx);
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len = 0;
+    EVP_DigestFinal_ex(ctx, digest, &digest_len);
+    EVP_MD_CTX_free(ctx);
 
     std::ostringstream oss;
-    for (int i = 0; i < MD5_DIGEST_LENGTH; ++i) {
+    for (unsigned int i = 0; i < digest_len; ++i) {
         oss << std::hex << std::setw(2) << std::setfill('0')
             << static_cast<int>(digest[i]);
     }
