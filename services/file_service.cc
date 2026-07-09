@@ -92,25 +92,54 @@ std::string FileService::GenerateFilepath(int64_t user_id,
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// 上传初始化
+// 上传初始化（支持断点续传）
+//
+// 状态机:
+//   客户端 → upload_start
+//     ├─ DB 中存在相同 user+filename+md5+filesize 且 status=0 ?
+//     │   ├─ YES → 返回已有 file_id + upload_size (offset), is_resume=true
+//     │   └─ NO  → 创建新记录, 返回 file_id + offset=0, is_resume=false
+//     └─ 参数错误/DB错误 → file_id <= 0
 // ═══════════════════════════════════════════════════════════════════
-int64_t FileService::UploadStart(int64_t user_id, const std::string& filename,
-                                   int64_t filesize, const std::string& md5) {
+UploadStartResult FileService::UploadStart(int64_t user_id,
+                                             const std::string& filename,
+                                             int64_t filesize,
+                                             const std::string& md5) {
+    UploadStartResult result;
+
     if (filename.empty() || filesize <= 0) {
         LOG_WARNING("UploadStart 参数错误");
-        return -1;
+        result.file_id = -1;
+        return result;
     }
 
     // 1. 清除文件名中的危险字符
     std::string safe_name = SanitizeFilename(filename);
 
-    // 2. 自动创建用户子目录
+    // ── 2. 断点续传检测 ──────────────────────────────────────────
+    // 查找同用户、同文件名、同文件大小、同 MD5 的未完成上传
+    auto existing = file_dao_->FindIncompleteByKey(
+        user_id, safe_name, filesize, md5);
+
+    if (existing) {
+        // 磁盘上已有部分数据 → 续传
+        result.file_id   = existing->id;
+        result.offset    = existing->upload_size;
+        result.is_resume = true;
+
+        LOG_INFO("UploadStart [续传]: file_id=" + std::to_string(existing->id)
+                 + ", already_uploaded=" + std::to_string(existing->upload_size)
+                 + "/" + std::to_string(filesize)
+                 + " (" + std::to_string(existing->upload_size * 100 / filesize) + "%)");
+
+        return result;
+    }
+
+    // ── 3. 新上传 ────────────────────────────────────────────────
     storage_->CreateUserDir(user_id);
 
-    // 3. 生成存储路径: {user_id}/{YYYYMMDD}_{HHmmss}_{safe_name}
     std::string filepath = GenerateFilepath(user_id, safe_name);
 
-    // 4. 写入 DB
     database::FileInfo file;
     file.user_id  = user_id;
     file.filename = safe_name;
@@ -122,15 +151,19 @@ int64_t FileService::UploadStart(int64_t user_id, const std::string& filename,
     int64_t file_id = file_dao_->Insert(file);
     if (file_id <= 0) {
         LOG_ERROR("UploadStart: DB 插入失败");
-        return -2;
+        result.file_id = -2;
+        return result;
     }
 
-    LOG_INFO("UploadStart: file_id=" + std::to_string(file_id)
-             + ", user_id=" + std::to_string(user_id)
+    result.file_id   = file_id;
+    result.offset    = 0;
+    result.is_resume = false;
+
+    LOG_INFO("UploadStart [新建]: file_id=" + std::to_string(file_id)
              + ", path=" + filepath
              + ", size=" + std::to_string(filesize));
 
-    return file_id;
+    return result;
 }
 
 // ═══════════════════════════════════════════════════════════════════

@@ -127,18 +127,21 @@ int main() {
     }
 
     // ═══════════════════════════════════════════════════════════════
-    // 测试 2: UploadStart
+    // 测试 2: UploadStart (新上传)
     // ═══════════════════════════════════════════════════════════════
     std::cout << "\n=== 测试 2: UploadStart ===" << std::endl;
     {
-        file_id = file_svc.UploadStart(kTestUserId, "test_10mb.dat",
-                                         kTestFileSize, original_md5);
-        if (file_id > 0) {
-            std::cout << "  file_id: " << file_id << std::endl;
+        auto result = file_svc.UploadStart(kTestUserId, "test_10mb.dat",
+                                             kTestFileSize, original_md5);
+        file_id = result.file_id;
+        if (file_id > 0 && !result.is_resume) {
+            std::cout << "  file_id: " << file_id
+                      << ", offset: " << result.offset
+                      << ", 新文件" << std::endl;
             std::cout << "  [通过] 上传初始化成功" << std::endl;
             passed++;
         } else {
-            std::cout << "  [失败] 上传初始化失败, code=" << file_id << std::endl;
+            std::cout << "  [失败] file_id=" << file_id << std::endl;
             failed++;
         }
     }
@@ -169,16 +172,16 @@ int main() {
     // ═══════════════════════════════════════════════════════════════
     std::cout << "\n=== 测试 2.6: 危险文件名过滤 ===" << std::endl;
     {
-        int64_t evil_id = file_svc.UploadStart(kTestUserId, "../../etc/passwd",
+        auto evil_result = file_svc.UploadStart(kTestUserId, "../../etc/passwd",
                                                  1024, "dummy");
-        auto evil_info = file_svc.GetFileInfo(evil_id);
+        auto evil_info = file_svc.GetFileInfo(evil_result.file_id);
         if (evil_info && evil_info->filepath.find("..") == std::string::npos
                       && evil_info->filepath.find("etc") == std::string::npos) {
             std::cout << "  sanitized: " << evil_info->filename << std::endl;
             std::cout << "  [通过] 路径遍历被过滤" << std::endl;
             passed++;
             // 清理
-            file_svc.Delete(evil_id, kTestUserId);
+            file_svc.Delete(evil_result.file_id, kTestUserId);
         } else {
             std::cout << "  [失败] 危险路径未被过滤" << std::endl;
             failed++;
@@ -365,6 +368,118 @@ int main() {
             std::cout << "  [失败]" << std::endl;
             failed++;
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 测试 10: 断点续传（50%后断开，重新上传）
+    // ═══════════════════════════════════════════════════════════════
+    std::cout << "\n=== 测试 10: 断点续传 ===" << std::endl;
+    {
+        const int64_t kResumeFileSize = 100 * 1024 * 1024;  // 100 MB
+        std::string resume_file = std::string(kStorageDir) + "/_resume_test.dat";
+        CreateTestFile(resume_file, kResumeFileSize);
+        std::string resume_md5 = FileMD5(resume_file);
+
+        // ── 第一次上传: 只传 50% ──────────────────────────────
+        auto r1 = file_svc.UploadStart(kTestUserId, "resume_test.dat",
+                                         kResumeFileSize, resume_md5);
+        int64_t resume_id = r1.file_id;
+        std::cout << "  第1次 UploadStart: file_id=" << resume_id
+                  << ", offset=" << r1.offset
+                  << ", is_resume=" << (r1.is_resume ? "yes" : "no") << std::endl;
+
+        // 只上传前 50MB
+        std::ifstream fs(resume_file, std::ios::binary);
+        int64_t half_size = kResumeFileSize / 2;
+        int64_t offset = 0;
+        std::string buf;
+        while (offset < half_size) {
+            size_t read_size = (offset + kChunkSize > half_size)
+                               ? (half_size - offset) : kChunkSize;
+            buf.resize(read_size);
+            fs.read(&buf[0], read_size);
+            file_svc.UploadData(resume_id, kTestUserId, buf, offset);
+            offset += read_size;
+        }
+        fs.close();
+
+        auto info_half = file_svc.GetFileInfo(resume_id);
+        std::cout << "  已上传: " << (info_half->upload_size >> 20) << " MB / "
+                  << (info_half->filesize >> 20) << " MB ("
+                  << (info_half->upload_size * 100 / info_half->filesize) << "%)" << std::endl;
+
+        // ── 模拟断开: 不调 finalize ───────────────────────────
+
+        // ── 第二次 UploadStart: 应检测到续传 ─────────────────
+        auto r2 = file_svc.UploadStart(kTestUserId, "resume_test.dat",
+                                         kResumeFileSize, resume_md5);
+
+        std::cout << "  第2次 UploadStart: file_id=" << r2.file_id
+                  << ", offset=" << r2.offset
+                  << ", is_resume=" << (r2.is_resume ? "yes" : "no") << std::endl;
+
+        bool resume_ok = (r2.is_resume
+                       && r2.file_id == resume_id
+                       && r2.offset == half_size);
+
+        if (resume_ok) {
+            std::cout << "  [通过] 检测到未完成任务，offset=" << (r2.offset >> 20) << " MB" << std::endl;
+            passed++;
+        } else {
+            std::cout << "  [失败] 续传检测失败" << std::endl;
+            failed++;
+        }
+
+        // ── 继续上传剩余 50% ──────────────────────────────────
+        if (resume_ok) {
+            fs.open(resume_file, std::ios::binary);
+            fs.seekg(half_size);
+            offset = half_size;
+            while (offset < kResumeFileSize) {
+                size_t read_size = (offset + kChunkSize > kResumeFileSize)
+                                   ? (kResumeFileSize - offset) : kChunkSize;
+                buf.resize(read_size);
+                fs.read(&buf[0], read_size);
+                file_svc.UploadData(resume_id, kTestUserId, buf, offset);
+                offset += read_size;
+            }
+            fs.close();
+
+            // 完成上传
+            file_svc.UploadFinalize(resume_id, kTestUserId);
+
+            auto final_info = file_svc.GetFileInfo(resume_id);
+            std::cout << "  续传后: upload_size=" << (final_info->upload_size >> 20)
+                      << " MB, status=" << final_info->status << std::endl;
+
+            // ── 下载校验 MD5 ──────────────────────────────────
+            std::string dl_path = std::string(kStorageDir) + "/_resume_dl.dat";
+            std::ofstream out(dl_path, std::ios::binary);
+            offset = 0;
+            while (offset < kResumeFileSize) {
+                std::string data = file_svc.DownloadChunk(resume_id, kTestUserId,
+                                                            offset, kChunkSize);
+                if (data.empty()) break;
+                out.write(data.data(), data.size());
+                offset += data.size();
+            }
+            out.close();
+
+            std::string dl_md5 = FileMD5(dl_path);
+            if (dl_md5 == resume_md5) {
+                std::cout << "  [通过] 断点续传后 MD5 校验一致" << std::endl;
+                passed++;
+            } else {
+                std::cout << "  [失败] MD5 不匹配" << std::endl;
+                failed++;
+            }
+
+            // 清理
+            file_svc.Delete(resume_id, kTestUserId);
+            std::remove(dl_path.c_str());
+        }
+
+        std::remove(resume_file.c_str());
     }
 
     // ── 清理 ─────────────────────────────────────────────────────

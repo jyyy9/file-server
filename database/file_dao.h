@@ -42,6 +42,14 @@ public:
     // 软删除 (status = 2)
     bool SoftDelete(int64_t file_id);
 
+    // ── 断点续传 ─────────────────────────────────────────────────
+    // 查找用户某个未完成的上传（用于续传）
+    // 匹配条件: user_id + filename + filesize + md5 完全相同 + status=0
+    FileInfoPtr FindIncompleteByKey(int64_t user_id,
+                                     const std::string& filename,
+                                     int64_t filesize,
+                                     const std::string& md5);
+
 private:
     MysqlPool* pool_;
 };
