@@ -3,11 +3,13 @@
 
 set(HANDLER_SOURCES
     business_processor.cc
+    request_router.cc
 )
 
 set(HANDLER_HEADERS
     task.h
     business_processor.h
+    request_router.h
 )
 
 add_library(gateway_handler STATIC ${HANDLER_SOURCES} ${HANDLER_HEADERS})
