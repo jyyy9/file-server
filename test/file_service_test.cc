@@ -26,7 +26,7 @@ const int    kDbPort     = 3306;
 const char*  kDbUser     = "root";
 const char*  kDbPassword = "123456";
 const char*  kDbName     = "fileserver";
-const char*  kStorageDir = "./storage_data";
+const char*  kStorageDir = "./storage/data";
 const int64_t kTestFileSize = 10 * 1024 * 1024;  // 10 MB
 const int64_t kChunkSize    = 4 * 1024 * 1024;   // 4 MB
 
@@ -139,6 +139,48 @@ int main() {
             passed++;
         } else {
             std::cout << "  [失败] 上传初始化失败, code=" << file_id << std::endl;
+            failed++;
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 测试 2.5: 验证存储路径结构
+    // ═══════════════════════════════════════════════════════════════
+    std::cout << "\n=== 测试 2.5: 验证路径结构 ===" << std::endl;
+    {
+        auto info = file_svc.GetFileInfo(file_id);
+        if (info) {
+            std::cout << "  DB filepath: " << info->filepath << std::endl;
+            // 格式应为: 1/YYYYMMDD_HHmmss_test_10mb.dat
+            bool path_ok = (info->filepath.find(std::to_string(kTestUserId) + "/") == 0
+                         && info->filepath.find("test_10mb.dat") != std::string::npos);
+            if (path_ok) {
+                std::cout << "  [通过] 路径格式正确" << std::endl;
+                passed++;
+            } else {
+                std::cout << "  [失败] 路径格式不正确" << std::endl;
+                failed++;
+            }
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // 测试 2.6: 文件名 sanitize（路径遍历攻击防护）
+    // ═══════════════════════════════════════════════════════════════
+    std::cout << "\n=== 测试 2.6: 危险文件名过滤 ===" << std::endl;
+    {
+        int64_t evil_id = file_svc.UploadStart(kTestUserId, "../../etc/passwd",
+                                                 1024, "dummy");
+        auto evil_info = file_svc.GetFileInfo(evil_id);
+        if (evil_info && evil_info->filepath.find("..") == std::string::npos
+                      && evil_info->filepath.find("etc") == std::string::npos) {
+            std::cout << "  sanitized: " << evil_info->filename << std::endl;
+            std::cout << "  [通过] 路径遍历被过滤" << std::endl;
+            passed++;
+            // 清理
+            file_svc.Delete(evil_id, kTestUserId);
+        } else {
+            std::cout << "  [失败] 危险路径未被过滤" << std::endl;
             failed++;
         }
     }

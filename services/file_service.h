@@ -18,16 +18,16 @@ namespace services {
 //
 // 业务逻辑层: 协调 FileDAO (元数据) 和 StorageManager (磁盘IO)
 //
-// 上传流程:
-//   1. UploadStart     — 创建 DB 记录, 返回 file_id (status=0 上传中)
-//   2. UploadData      — 写入 chunk 到磁盘, 更新 upload_size
-//   3. UploadFinalize  — 验证完整性, 标记 status=1 (完成)
+// 存储路径规则:
+//   {storage_root}/{user_id}/{YYYYMMDD}_{HHmmss}_{original_filename}
 //
-// 下载流程:
-//   DownloadChunk(file_id, offset, size) — 从磁盘读取 chunk
+//   DB filepath 存储相对路径: {user_id}/{YYYYMMDD}_{HHmmss}_{original_filename}
+//   根路径由 StorageManager 拼接，迁移时只改配置不改数据库
 //
-// 删除:
-//   Delete → 软删除 DB 记录 (status=2) + 删除磁盘文件
+// 安全约束:
+//   - 客户端只传 filename（纯文件名），不传路径
+//   - 服务端生成实际存储路径
+//   - filename 做 sanitize: 去除 ../ \ 等危险字符
 class FileService {
 public:
     FileService(database::FileDAO* file_dao, storage::StorageManager* storage);
@@ -38,38 +38,44 @@ public:
     // ── 上传 ─────────────────────────────────────────────────────
 
     // 初始化上传: 创建 DB 记录, 返回 file_id
-    // 返回 -1: 参数错误, -2: 数据库错误
+    // user_id:  用户ID（决定存储子目录）
+    // filename: 客户端传来的原始文件名（纯文件名，不含路径）
+    // filesize: 文件总大小（字节）
+    // md5:      文件 MD5（用于完整性校验）
+    // 返回: file_id (>0), -1 参数错误, -2 数据库错误
     int64_t UploadStart(int64_t user_id, const std::string& filename,
                          int64_t filesize, const std::string& md5);
 
     // 上传数据块: 写入磁盘 + 更新 DB 进度
-    // 返回实际写入字节数, -1 表示失败
     int64_t UploadData(int64_t file_id, int64_t user_id,
                         const std::string& data, int64_t offset);
 
-    // 完成上传: 验证完整性, 标记为完成
-    // 验证 upload_size >= filesize 且文件存在
+    // 完成上传: 验证完整性, 标记 status=1
     bool UploadFinalize(int64_t file_id, int64_t user_id);
 
     // ── 下载 ─────────────────────────────────────────────────────
-    // 按 chunk 读取文件数据 (4MB chunk)
-    // 返回读取的数据, 空字符串表示失败或 EOF
     std::string DownloadChunk(int64_t file_id, int64_t user_id,
                                int64_t offset, size_t size);
 
     // ── 查询 ─────────────────────────────────────────────────────
-    // 查询用户的所有文件
     std::vector<database::FileInfoPtr> QueryFiles(int64_t user_id);
-
-    // 获取文件信息
     database::FileInfoPtr GetFileInfo(int64_t file_id);
 
     // ── 删除 ─────────────────────────────────────────────────────
     bool Delete(int64_t file_id, int64_t user_id);
 
 private:
-    database::FileDAO*      file_dao_;   // 不持有所有权
-    storage::StorageManager* storage_;    // 不持有所有权
+    // ── 文件名安全处理 ──────────────────────────────────────────
+    // 去除路径分隔符、上级目录等危险字符
+    static std::string SanitizeFilename(const std::string& filename);
+
+    // ── 生成存储相对路径 ────────────────────────────────────────
+    // 格式: {user_id}/{YYYYMMDD}_{HHmmss}_{sanitized_filename}
+    static std::string GenerateFilepath(int64_t user_id,
+                                         const std::string& filename);
+
+    database::FileDAO*       file_dao_;
+    storage::StorageManager* storage_;
 };
 
 }  // namespace services
