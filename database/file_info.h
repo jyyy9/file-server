@@ -9,8 +9,7 @@ namespace fileserver {
 namespace database {
 
 // ── 文件状态 ─────────────────────────────────────────────────────
-// 对应 common.h 中的 FileStatus, 这里重导出便于模块内使用
-using common::FileStatus;
+// FileStatus 定义在 common/common.h 的 fileserver 命名空间中
 
 // ── 文件元数据实体 ───────────────────────────────────────────────
 struct FileInfo {
