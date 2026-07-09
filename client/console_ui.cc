@@ -1,5 +1,6 @@
 #include "client/console_ui.h"
 #include <iostream>
+#include <fstream>
 #include <iomanip>
 #include <sstream>
 #include <chrono>
