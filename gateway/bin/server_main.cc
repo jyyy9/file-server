@@ -8,6 +8,7 @@
 #include "gateway/network/tcp_server_wrapper.h"
 #include "gateway/handler/business_processor.h"
 #include "gateway/handler/request_router.h"
+#include "protocol/encoder.h"
 
 #include "database/mysql_pool.h"
 #include "database/user_dao.h"
