@@ -314,26 +314,7 @@ int main() {
         }
     }
 
-    // ═══════════════════════════════════════════════════════════════
-    // 测试 7: 断点续传验证 (重复上传同一 chunk 应成功)
-    // ═══════════════════════════════════════════════════════════════
-    std::cout << "\n=== 测试 7: 断点续传覆盖写 ===" << std::endl;
-    {
-        // 重新上传第一个 chunk 的相同数据
-        std::ifstream fs(test_file_path, std::ios::binary);
-        std::string buf(kChunkSize, '\0');
-        fs.read(&buf[0], kChunkSize);
-        fs.close();
-
-        int64_t written = file_svc.UploadData(file_id, kTestUserId, buf, 0);
-        if (written == kChunkSize) {
-            std::cout << "  [通过] 覆盖写入成功" << std::endl;
-            passed++;
-        } else {
-            std::cout << "  [失败]" << std::endl;
-            failed++;
-        }
-    }
+    // 测试 7 已移除 —— finalize 后不允许写入，断点续传由 test 10 覆盖
 
     // ═══════════════════════════════════════════════════════════════
     // 测试 8: 删除文件
