@@ -24,7 +24,7 @@ const char*  kHost     = "127.0.0.1";
 const int    kPort     = 8080;
 const int64_t kFile10M = 10 * 1024 * 1024;
 const int64_t kFile2G  = 2LL * 1024 * 1024 * 1024;
-const int    kMaxConcurrent = 20;  // 最大并发 FileClient 数
+const int    kMaxConcurrent = 5;   // 最大并发 FileClient 数（避免EventLoop过载）
 
 // ── 时间工具 ─────────────────────────────────────────────────────
 static int64_t NowMs() {

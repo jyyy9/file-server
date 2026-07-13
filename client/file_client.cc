@@ -36,17 +36,17 @@ FileClient::FileClient()
 }
 
 FileClient::~FileClient() {
-    Disconnect();
-    if (loop_) loop_->quit();
+    connected_ = false;
+    // muduo 成员析构链: TcpClient → EventLoop → EventLoopThread
+    // 顺序正确即可，不做额外操作
 }
 
 // ── 连接 ─────────────────────────────────────────────────────────
 bool FileClient::Connect(const std::string& host, int port) {
-    // 先断开旧连接
     if (connection_) {
-        connection_->shutdown();
-        connection_.reset();
+        connection_.reset();  // 释放旧连接，不调 shutdown
     }
+    connected_ = false;
     tcp_client_.reset(new muduo::net::TcpClient(loop_,
         muduo::net::InetAddress(host, port), "FileClient"));
     tcp_client_->setConnectionCallback(
@@ -65,9 +65,7 @@ bool FileClient::Connect(const std::string& host, int port) {
 
 void FileClient::Disconnect() {
     connected_ = false;
-    if (connection_) {
-        connection_->shutdown();
-    }
+    connection_.reset();
 }
 
 bool FileClient::IsConnected() const { return connected_; }
