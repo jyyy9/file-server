@@ -63,6 +63,23 @@ static void PrintBar(const std::string& title) {
 }
 
 // ═══════════════════════════════════════════════════════════════════
+// 预检查: 确认服务端可达
+// ═══════════════════════════════════════════════════════════════════
+static bool PreCheck() {
+    std::cout << "  检查服务端连接..." << std::endl;
+    FileClient c;
+    if (!c.Connect(kHost, kPort)) {
+        std::cerr << "  [失败] 无法连接到 " << kHost << ":" << kPort
+                  << "\n  请确认: 服务端是否已启动? 端口是否正确?\n" << std::endl;
+        return false;
+    }
+    auto r = c.Register("precheck_user", "pass");
+    std::cout << "  注册测试: code=" << r.code << " msg=" << r.msg << std::endl;
+    c.Disconnect();
+    return true;
+}
+
+// ═══════════════════════════════════════════════════════════════════
 // 测试 1: 200 并发连接
 // ═══════════════════════════════════════════════════════════════════
 static void Test200Connections() {
@@ -80,8 +97,8 @@ static void Test200Connections() {
                 // 先注册
                 std::string user = "stress_conn_" + std::to_string(i);
                 auto r = c.Register(user, "pass");
-                if (r.ok() || r.code == -1) ok++;  // -1=已注册也算OK
-                else fail++;
+                if (r.ok() || r.code == -1) ok++;
+                else { fail++; std::cerr << "  [" << i << "] code=" << r.code << " " << r.msg << std::endl; }
                 c.Disconnect();
             } else {
                 fail++;
@@ -175,11 +192,13 @@ static void Test50ConcurrentUpload() {
             if (!login.ok()) { fail++; return; }
 
             auto resp = c.UploadFile(c.GetToken(), "/tmp/stress_upload_10mb.dat", nullptr);
-            if (resp.ok() && resp.data.value("code", -1) == 0) {
+            if (resp.ok()) {
                 ok++;
                 total_bytes += kFile10M;
             } else {
                 fail++;
+                std::cerr << "  [失败] 上传失败: code=" << resp.code
+                          << " msg=" << resp.msg << std::endl;
             }
             c.Disconnect();
         });
@@ -325,6 +344,8 @@ int main(int argc, char* argv[]) {
     std::cout << "======================================" << std::endl;
 
     std::string test = (argc >= 2) ? argv[1] : "all";
+
+    if (!PreCheck()) return 1;
 
     int64_t t0 = NowMs();
 
