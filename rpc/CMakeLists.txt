@@ -16,7 +16,6 @@ set(RPC_SOURCES
 )
 
 set(RPC_HEADERS
-    rpc.h
     zk_client.h
     rpc_server.h
     rpc_client.h

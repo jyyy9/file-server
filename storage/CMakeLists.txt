@@ -6,7 +6,6 @@ set(STORAGE_SOURCES
 )
 
 set(STORAGE_HEADERS
-    storage.h
     storage_manager.h
 )
 

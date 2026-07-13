@@ -6,7 +6,6 @@ set(SERVICES_SOURCES
 )
 
 set(SERVICES_HEADERS
-    services.h
     user_service.h
     file_service.h
 )

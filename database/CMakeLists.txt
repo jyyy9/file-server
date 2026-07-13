@@ -8,7 +8,6 @@ set(DATABASE_SOURCES
 )
 
 set(DATABASE_HEADERS
-    database.h
     user.h
     mysql_pool.h
     user_dao.h
