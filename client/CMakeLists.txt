@@ -7,7 +7,6 @@ set(CLIENT_SOURCES
 )
 
 set(CLIENT_HEADERS
-    client.h
     file_client.h
     console_ui.h
 )
