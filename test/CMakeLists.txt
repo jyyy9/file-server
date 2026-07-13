@@ -67,6 +67,24 @@ target_link_libraries(file_service_test
     pthread
 )
 
+# 端到端集成测试（4个场景）
+add_executable(integration_test integration_test.cc)
+
+target_include_directories(integration_test PRIVATE
+    ${PROJECT_SOURCE_DIR}/third_party
+)
+
+target_link_libraries(integration_test
+    client
+    protocol
+    muduo_net
+    muduo_base
+    common
+    ssl
+    crypto
+    pthread
+)
+
 # 压力测试（200连接/50并发上传/2GB传输）
 add_executable(stress_test stress_test.cc)
 

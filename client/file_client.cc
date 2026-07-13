@@ -275,7 +275,11 @@ ClientResponse FileClient::UploadFile(const std::string& token,
     fs.close();
 
     // 4. finalize
-    return UploadFinalize(token, file_id);
+    auto final_resp = UploadFinalize(token, file_id);
+    if (final_resp.ok()) {
+        final_resp.data["file_id"] = file_id;
+    }
+    return final_resp;
 }
 
 // ── 下载文件（完整流程）──────────────────────────────────────────
