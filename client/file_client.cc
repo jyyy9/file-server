@@ -37,7 +37,7 @@ FileClient::FileClient()
 
 FileClient::~FileClient() {
     Disconnect();
-    loop_thread_.getLoop()->quit();
+    if (loop_) loop_->quit();
 }
 
 // ── 连接 ─────────────────────────────────────────────────────────
