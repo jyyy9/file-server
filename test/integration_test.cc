@@ -15,7 +15,7 @@
 #include <chrono>
 #include <cstdio>
 #include <cstring>
-#include <sys/wait.h>
+#include <random>
 #include <openssl/evp.h>
 
 #include "client/file_client.h"
@@ -60,9 +60,9 @@ static void MakeRandomFile(const std::string& path, int64_t size) {
     char buf[65536];
     int64_t w = 0;
     while (w < size) {
-        size_t n = std::min(sizeof(buf), (size_t)(size - w));
-        for (size_t i = 0; i < n; ++i) buf[i] = (char)(rng() & 0xFF);
-        fs.write(buf, n);
+        int64_t n = std::min(static_cast<int64_t>(sizeof(buf)), size - w);
+        for (int64_t i = 0; i < n; ++i) buf[i] = static_cast<char>(rng() & 0xFF);
+        fs.write(buf, static_cast<size_t>(n));
         w += n;
     }
 }
@@ -103,18 +103,19 @@ static void Scenario1_FullChain() {
 
         // upload_data
         std::ifstream fs(test_file, std::ios::binary);
-        int64_t offset = 0, chunk = 4*1024*1024;
+        int64_t offset = 0, chunk = 4LL * 1024 * 1024;
+        int64_t total_size = 10LL * 1024 * 1024;
         std::string buf;
-        while (offset < 10*1024*1024) {
-            size_t sz = std::min(chunk, 10LL*1024*1024 - offset);
-            buf.resize(sz);
+        while (offset < total_size) {
+            int64_t sz = std::min(chunk, total_size - offset);
+            buf.resize(static_cast<size_t>(sz));
             fs.read(&buf[0], sz);
             auto dr = c.UploadData(c.GetToken(), file_id, offset, buf);
-            if (!dr.ok()) { CHECK(false, "", "upload_data offset="+std::to_string(offset)+" 失败: "+dr.msg); break; }
+            if (!dr.ok()) { CHECK(false, "", "upload_data off="+std::to_string(offset)+" fail: "+dr.msg); break; }
             offset += sz;
         }
         fs.close();
-        CHECK(offset == 10*1024*1024, "上传10MB完成", "上传未完成: "+std::to_string(offset));
+        CHECK(offset == total_size, "上传10MB完成", "上传未完成: "+std::to_string(offset));
 
         // upload_finalize
         auto fin = c.UploadFinalize(c.GetToken(), file_id);
@@ -237,10 +238,11 @@ static void Scenario3_Resume() {
         // 只传 50%
         std::ifstream fs(test_file, std::ios::binary);
         int64_t offset = 0;
+        const int64_t kChunk = 4LL * 1024 * 1024;
         std::string buf;
         while (offset < half) {
-            size_t sz = std::min(4LL*1024*1024, half - offset);
-            buf.resize(sz);
+            int64_t sz = std::min(kChunk, half - offset);
+            buf.resize(static_cast<size_t>(sz));
             fs.read(&buf[0], sz);
             c.UploadData(c.GetToken(), file_id, offset, buf);
             offset += sz;
@@ -266,10 +268,11 @@ static void Scenario3_Resume() {
         // 继续传剩余50%
         std::ifstream fs(test_file, std::ios::binary);
         fs.seekg(offset);
+        const int64_t kChunk = 4LL * 1024 * 1024;
         std::string buf;
         while (offset < kSize) {
-            size_t sz = std::min(4LL*1024*1024, kSize - offset);
-            buf.resize(sz);
+            int64_t sz = std::min(kChunk, kSize - offset);
+            buf.resize(static_cast<size_t>(sz));
             fs.read(&buf[0], sz);
             c.UploadData(c.GetToken(), file_id, offset, buf);
             offset += sz;
