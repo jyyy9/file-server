@@ -33,18 +33,24 @@ int main() {
     rpc::RpcServer server(&loop, muduo::net::InetAddress(9003),
                            "StorageService", 2, 2);
 
-    server.RegisterMethod("WriteChunk", [&](const nlohmann::json& args) {
-        // 注意: chunk 数据不在这个 RPC 里传输
-        // 大文件数据通过独立 TCP 数据面直传
-        int64_t written = st.WriteChunk(
-            args["filepath"],
-            args.value("data","").c_str(),
-            args.value("size", 0UL),
-            args["offset"]);
-        nlohmann::json r;
-        r["code"]    = (written >= 0) ? 0 : -1;
-        r["written"] = written;
-        return r;
+    server.RegisterBinaryMethod("WriteChunk", [&](const nlohmann::json& args, const std::string& data) {
+        const std::string filepath = args.at("filepath");
+        const int64_t user_id = args.at("user_id");
+        const int64_t offset = args.at("offset");
+        if (user_id <= 0 || offset < 0 || data.empty() ||
+            args.at("size").get<int64_t>() != static_cast<int64_t>(data.size()) ||
+            filepath.compare(0, std::to_string(user_id).size() + 1, std::to_string(user_id) + "/") != 0 ||
+            filepath.find("..") != std::string::npos || filepath.find('\\') != std::string::npos ||
+            !st.CreateUserDir(user_id))
+            return nlohmann::json{{"code", -1}, {"msg", "无效的存储写入请求"}};
+        const int64_t written = st.WriteChunk(filepath, data.data(), data.size(), offset);
+        return nlohmann::json{{"code", written == static_cast<int64_t>(data.size()) ? 0 : -1},
+                              {"written", written}};
+    });
+
+    server.RegisterMethod("GetFileSize", [&](const nlohmann::json& args) {
+        const int64_t size = st.GetFileSize(args.at("filepath"));
+        return nlohmann::json{{"code", size >= 0 ? 0 : -1}, {"size", size}};
     });
 
     server.RegisterMethod("ReadChunk", [&](const nlohmann::json& args) {
@@ -63,14 +69,6 @@ int main() {
         bool ok = st.DeleteFile(args["filepath"]);
         nlohmann::json r;
         r["code"] = ok ? 0 : -1;
-        return r;
-    });
-
-    server.RegisterMethod("GetFileSize", [&](const nlohmann::json& args) {
-        int64_t sz = st.GetFileSize(args["filepath"]);
-        nlohmann::json r;
-        r["code"] = 0;
-        r["size"] = sz;
         return r;
     });
 

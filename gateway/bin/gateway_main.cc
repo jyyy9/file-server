@@ -64,20 +64,23 @@ static std::pair<std::string,int> ParseAddr(const std::string& addr) {
 static nlohmann::json CallRpc(ServiceDiscovery& sd,
                                 const std::string& service,
                                 const std::string& method,
-                                const nlohmann::json& args) {
+                                const nlohmann::json& args,
+                                const std::string& binary = "") {
     std::string addr;
     if (service == "UserService")    addr = sd.GetUserService();
     else if (service == "FileService") addr = sd.GetFileService();
     else addr = sd.GetStorageService();
 
-    auto [host, port] = ParseAddr(addr);
+    auto endpoint = ParseAddr(addr);
+    const auto& host = endpoint.first;
+    const int port = endpoint.second;
 
     rpc::RpcClient client;
     if (!client.Connect(host, port)) {
         return {{"code", -1}, {"msg", "无法连接 " + service + " at " + addr}};
     }
 
-    auto result = client.Call(method, args);
+    auto result = client.Call(method, args, 5000, binary);
     client.Disconnect();
     return result;
 }
@@ -156,11 +159,27 @@ int main() {
         int64_t uid = VerifyToken(sd, j.value("token", ""));
         if (uid <= 0) return MakeResponse(req, -1, "认证失败");
 
-        // 数据面: 直接写磁盘 (StorageService 在此架构中介入较少)
-        // 大文件 chunk 通过此连接直传，不经过 RPC
-        return MakeResponse(req, 0, "chunk received",
-                            {{"size", static_cast<int64_t>(req.binary_data.size())}});
-        // 注: 实际微服务部署中，客户端直连 StorageService 发 chunk
+        const int64_t offset = j.value("offset", 0LL);
+        const int64_t size = static_cast<int64_t>(req.binary_data.size());
+        nlohmann::json args = {{"file_id", j.at("file_id")}, {"user_id", uid},
+                               {"offset", offset}, {"size", size}};
+        auto prepared = CallRpc(sd, "FileService", "PrepareUploadChunk", args);
+        if (prepared.value("code", -1) != 0)
+            return MakeResponse(req, prepared.value("code", -1), prepared.value("msg", "上传校验失败"));
+
+        if (offset + size <= prepared.value("upload_size", 0LL))
+            return MakeResponse(req, 0, "ok", {{"written", size}, {"upload_size", prepared.at("upload_size")}});
+
+        auto written = CallRpc(sd, "StorageService", "WriteChunk",
+            {{"filepath", prepared.at("filepath")}, {"user_id", uid},
+             {"offset", offset}, {"size", size}}, req.binary_data);
+        if (written.value("code", -1) != 0 || written.value("written", -1LL) != size)
+            return MakeResponse(req, -1, written.value("msg", "存储写入失败"));
+
+        auto confirmed = CallRpc(sd, "FileService", "ConfirmUploadChunk", args);
+        if (confirmed.value("code", -1) != 0)
+            return MakeResponse(req, confirmed.value("code", -1), confirmed.value("msg", "进度确认失败"));
+        return MakeResponse(req, 0, "ok", {{"written", size}, {"upload_size", confirmed.at("upload_size")}});
     });
 
     router.Register("upload_finalize", [&](const protocol::Message& req) {

@@ -80,7 +80,10 @@ int64_t StorageManager::WriteChunk(const std::string& filepath,
         return -1;
     }
 
+    fs.flush();
+    if (fs.fail()) return -1;
     fs.close();
+    if (fs.fail()) return -1;
     return static_cast<int64_t>(len);
 }
 

@@ -6,6 +6,7 @@
 #include <muduo/net/EventLoop.h>
 #include <muduo/net/InetAddress.h>
 #include "rpc/rpc_server.h"
+#include "rpc/rpc_client.h"
 #include "rpc/zk_client.h"
 #include "database/mysql_pool.h"
 #include "database/file_dao.h"
@@ -58,9 +59,45 @@ int main() {
         return r;
     });
 
+    auto validate_chunk = [&](const nlohmann::json& args) -> database::FileInfoPtr {
+        auto info = file_dao.FindById(args.at("file_id"));
+        const int64_t offset = args.at("offset");
+        const int64_t size = args.at("size");
+        if (!info || info->user_id != args.at("user_id").get<int64_t>() || !info->IsUploading() ||
+            offset < 0 || size <= 0 || offset > info->filesize || size > info->filesize - offset ||
+            offset > info->upload_size || (offset < info->upload_size && offset + size > info->upload_size))
+            return nullptr;
+        return info;
+    };
+    server.RegisterMethod("PrepareUploadChunk", [&](const nlohmann::json& args) {
+        auto info = validate_chunk(args);
+        if (!info) return nlohmann::json{{"code", -1}, {"msg", "文件、权限或上传偏移无效"}};
+        return nlohmann::json{{"code", 0}, {"filepath", info->filepath},
+                              {"upload_size", info->upload_size}};
+    });
+    server.RegisterMethod("ConfirmUploadChunk", [&](const nlohmann::json& args) {
+        auto info = validate_chunk(args);
+        if (!info || !file_dao.ConfirmUploadChunk(args.at("file_id"), args.at("user_id"),
+                                                  args.at("offset"), args.at("size")))
+            return nlohmann::json{{"code", -1}, {"msg", "上传进度更新失败"}};
+        auto confirmed = file_dao.FindById(args.at("file_id"));
+        if (!confirmed) return nlohmann::json{{"code", -1}, {"msg", "上传进度查询失败"}};
+        return nlohmann::json{{"code", 0}, {"upload_size", confirmed->upload_size}};
+    });
+
     server.RegisterMethod("UploadFinalize", [&](const nlohmann::json& args) {
-        bool ok = file_svc.UploadFinalize(
-            args["file_id"], args["user_id"]);
+        auto info = file_dao.FindById(args.at("file_id"));
+        if (!info || info->user_id != args.at("user_id").get<int64_t>() ||
+            !info->IsUploading() || info->upload_size != info->filesize)
+            return nlohmann::json{{"code", -1}};
+        rpc::RpcClient storage_client;
+        bool ok = storage_client.Connect(GetEnv("FS_STORAGE_HOST", "127.0.0.1"),
+                                         GetEnvInt("FS_STORAGE_PORT", 9003));
+        if (ok) {
+            auto stat = storage_client.Call("GetFileSize", {{"filepath", info->filepath}});
+            ok = stat.value("code", -1) == 0 && stat.value("size", -1LL) == info->filesize;
+        }
+        if (ok) ok = file_dao.UpdateStatus(info->id, 1);
         nlohmann::json r;
         r["code"] = ok ? 0 : -1;
         return r;

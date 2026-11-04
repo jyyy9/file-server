@@ -70,7 +70,7 @@ void RpcClient::ResolvePending(uint32_t id, const nlohmann::json& r) {
 // ── 同步调用 ─────────────────────────────────────────────────────
 nlohmann::json RpcClient::Call(const std::string& method,
                                   const nlohmann::json& args,
-                                  int timeout_ms) {
+                                  int timeout_ms, const std::string& binary) {
     if (!connection_) return {{"code", -1}, {"msg", "未连接"}};
 
     protocol::Message msg;
@@ -80,6 +80,7 @@ nlohmann::json RpcClient::Call(const std::string& method,
     nlohmann::json j = args;
     j["method"] = method;
     msg.SetJson(j);
+    msg.binary_data = binary;
 
     std::string wire = protocol::Encoder::Encode(msg);
     std::promise<nlohmann::json> promise;

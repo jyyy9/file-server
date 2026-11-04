@@ -46,7 +46,8 @@ public:
     // 同步 RPC 调用，阻塞等待响应
     nlohmann::json Call(const std::string& method,
                          const nlohmann::json& args,
-                         int timeout_ms = 5000);
+                         int timeout_ms = 5000,
+                         const std::string& binary = "");
 
 private:
     void OnConnection(const TcpConnectionPtr& conn);
