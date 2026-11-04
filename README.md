@@ -69,7 +69,8 @@ FileServer/
 ├── database/      1,060 行           # 数据库层
 │   ├── mysql_pool.h/.cc              # MySQL连接池 (RAII, shared_ptr自定义删除器)
 │   ├── user.h + user_dao.h/.cc       # 用户实体 + 数据访问 (Prepared Statement)
-│   └── file_info.h + file_dao.h/.cc  # 文件元数据实体 + DAO (含断点续传查询)
+│   ├── file_info.h + file_dao.h/.cc  # 文件元数据实体 + DAO (含断点续传查询)
+│   └── schema.sql                    # 建库建表 SQL (数据库初始化)
 │
 ├── storage/        247 行            # 存储层
 │   └── storage_manager.h/.cc         # 分块磁盘读写 (4MB chunk, seekp/seekg, 按user_id分目录)
@@ -121,8 +122,10 @@ FileServer/
 
 | 依赖 | 用途 | 安装 |
 |------|------|------|
+| CMake / g++ / make | 构建工具 | sudo apt install cmake build-essential |
 | muduo | 网络库 (TcpServer/EventLoop/TcpClient) | 克隆到 third_party/muduo, ./build.sh install |
-| MySQL | 数据库 | sudo apt install libmysqlclient-dev |
+| Boost | muduo 编译依赖 (仅头文件) | sudo apt install libboost-dev |
+| MySQL | 数据库 (服务端 + 客户端 + 开发库) | sudo apt install mysql-server mysql-client libmysqlclient-dev |
 | nlohmann/json | JSON解析 | 下载 json.hpp 到 third_party/nlohmann/ |
 | OpenSSL | MD5校验 | sudo apt install libssl-dev |
 | ZooKeeper | 服务注册发现 (可选, 微服务模式) | sudo apt install libzookeeper-mt-dev zookeeper |
@@ -151,19 +154,92 @@ make
 
 ---
 
+## 数据库初始化
+
+首次运行前必须先建库建表。否则服务端能正常启动，但注册、上传等操作会失败，日志报
+`Table 'fileserver.user' doesn't exist`。
+
+```bash
+# 1. 启动 MySQL (WSL 未启用 systemd 时用 service 而非 systemctl)
+sudo service mysql start
+
+# 2. 建库 + 建表 (脚本可重复执行，不会覆盖已有数据)
+mysql -h 127.0.0.1 -u root -p < database/schema.sql
+
+# 3. 验证
+mysql -h 127.0.0.1 -u root -p -D fileserver -e "SHOW TABLES;"
+```
+
+表结构定义见 [database/schema.sql](database/schema.sql)：
+
+| 表 | 说明 |
+|---|---|
+| `user` | 用户账号、密码摘要（MD5）、登录 token |
+| `file_info` | 文件元数据、上传进度（断点续传） |
+
+服务端（单体模式与三个微服务）的连接参数均支持环境变量覆盖，未设置时使用默认值：
+
+| 环境变量 | 默认值 | 说明 | 使用者 |
+|---|---|---|---|
+| `FS_DB_HOST` | `127.0.0.1` | 数据库地址 | 单体 / 微服务 |
+| `FS_DB_PORT` | `3306` | 数据库端口 | 单体 / 微服务 |
+| `FS_DB_USER` | `root` | 数据库用户名 | 单体 / 微服务 |
+| `FS_DB_PASS` | `123456` | 数据库密码 | 单体 / 微服务 |
+| `FS_DB_NAME` | `fileserver` | 库名 | 单体 / 微服务 |
+| `FS_STORAGE_ROOT` | `./storage/data` | 文件落盘目录 | 单体 / file / storage |
+| `FS_ZK_HOSTS` | `127.0.0.1:2181` | ZooKeeper 地址 | 微服务 / gateway |
+| `FS_ADVERTISE_HOST` | `127.0.0.1` | 注册到 ZooKeeper 的服务地址（多机/容器部署时设为本机可达 IP 或容器名） | 微服务 |
+
+读取顺序是 **环境变量 → 默认值**：设置了环境变量就用它，否则才用上表的默认值。
+默认值只服务于本地开发；部署到服务器时请使用自己的凭据，**不要修改代码**。
+
+```bash
+# 部署前：清掉遗留配置，再设置自己的（变量名必须与上表完全一致）
+unset FS_DB_HOST FS_DB_USER FS_DB_PASS FS_DB_NAME FS_STORAGE_ROOT
+
+export FS_DB_HOST=127.0.0.1
+export FS_DB_USER=root
+export FS_DB_PASS='你的数据库密码'
+export FS_DB_NAME=fileserver
+export FS_STORAGE_ROOT=/var/lib/fileserver/data
+
+# 环境变量只在进程启动时读取一次，修改后必须重启服务端才生效
+./build/gateway/bin/fileserver_server
+
+# 检查当前生效的配置
+env | grep FS_
+```
+
+注意：
+
+- 把变量设成**空字符串**（`export FS_DB_PASS=`）不会回退到默认值，程序会拿空值去连库；
+  想恢复默认请用 `unset`
+- 密码不要写进 README、源码或 Git；建议放在不提交的启动脚本里，或 systemd 的 `Environment=` 配置中
+
+> MySQL 8 默认给 root 使用 `auth_socket` 认证，若 `mysql -u root -p` 无法登录，
+> 先执行 `sudo mysql` 进入，再执行：
+> `ALTER USER 'root'@'localhost' IDENTIFIED WITH mysql_native_password BY '123456';`
+
+---
+
 ## 运行
 
 ### 单体模式 (单进程)
 
 ```bash
-# 1. 确保 MySQL 运行 + 建库
-mysql -u root -p -e "CREATE DATABASE IF NOT EXISTS fileserver"
+# 1. 确保 MySQL 已启动，且已完成「数据库初始化」一节
 
 # 2. 启动服务端
 ./gateway/bin/fileserver_server &
 
 # 3. 启动客户端
 ./client/fileserver_client
+```
+
+客户端默认连接 `127.0.0.1:8080`。连接远程服务端时，按顺序传入地址和端口：
+
+```bash
+./client/fileserver_client <服务器IP> <端口>
 ```
 
 ### 微服务模式 (4进程, 需 ZooKeeper)
