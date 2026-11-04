@@ -66,14 +66,15 @@ static int64_t GetUserIdFromToken(const std::string& token,
 int main() {
     Logger::Instance().SetLevel(LogLevel::kDebug);
 
-    // ── 数据库 ──────────────────────────────────────────────────
-    const char* db_host = std::getenv("FS_DB_HOST") ?: "127.0.0.1";
-    const char* db_user = std::getenv("FS_DB_USER") ?: "root";
-    const char* db_pass = std::getenv("FS_DB_PASS") ?: "123456";
-    const char* db_name = std::getenv("FS_DB_NAME") ?: "fileserver";
-    const char* storage_root = std::getenv("FS_STORAGE_ROOT") ?: "./storage/data";
+    // ── 数据库（环境变量优先，未设置时用默认值）──────────────────
+    const std::string db_host      = GetEnv("FS_DB_HOST", "127.0.0.1");
+    const int         db_port      = GetEnvInt("FS_DB_PORT", 3306);
+    const std::string db_user      = GetEnv("FS_DB_USER", "root");
+    const std::string db_pass      = GetEnv("FS_DB_PASS", "123456");
+    const std::string db_name      = GetEnv("FS_DB_NAME", "fileserver");
+    const std::string storage_root = GetEnv("FS_STORAGE_ROOT", "./storage/data");
 
-    database::MysqlPool db_pool(db_host, 3306, db_user, db_pass, db_name, 8);
+    database::MysqlPool db_pool(db_host, db_port, db_user, db_pass, db_name, 8);
     storage::StorageManager storage(storage_root);
 
     // ── DAO ──────────────────────────────────────────────────────

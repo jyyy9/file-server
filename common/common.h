@@ -2,12 +2,34 @@
 #define FILESERVER_COMMON_COMMON_H_
 
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 #include <memory>
 #include <vector>
 #include <map>
 
 namespace fileserver {
+
+// ── 环境变量工具 ─────────────────────────────────────────────────
+// 读取环境变量；未设置或为空串时返回默认值。
+// 不能直接写 getenv(name) ?: default —— 设为空串时指针仍然非空，
+// 会导致空值覆盖默认值；这里显式判断首个字符。
+inline std::string GetEnv(const char* name, const char* default_value) {
+    const char* value = std::getenv(name);
+    return (value != nullptr && value[0] != '\0')
+               ? std::string(value)
+               : std::string(default_value);
+}
+
+inline int GetEnvInt(const char* name, int default_value) {
+    const char* value = std::getenv(name);
+    if (value == nullptr || value[0] == '\0') return default_value;
+    try {
+        return std::stoi(value);
+    } catch (...) {
+        return default_value;
+    }
+}
 
 // ── 基础类型定义 ─────────────────────────────────────────────────
 using StringList  = std::vector<std::string>;

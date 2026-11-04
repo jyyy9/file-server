@@ -11,6 +11,7 @@
 #include "database/file_dao.h"
 #include "services/file_service.h"
 #include "storage/storage_manager.h"
+#include "common/common.h"
 #include "common/logger.h"
 
 using namespace fileserver;
@@ -20,15 +21,19 @@ muduo::net::EventLoop* g_loop = nullptr;
 int main() {
     Logger::Instance().SetLevel(LogLevel::kInfo);
 
-    const char* db_host  = "127.0.0.1";
-    const char* db_user  = "root";
-    const char* db_pass  = "123456";
-    const char* db_name  = "fileserver";
-    const char* zk_hosts = "127.0.0.1:2181";
-    const char* storage  = "./storage/data";
+    // ── 配置（环境变量优先，未设置时用默认值）──────────────────
+    const std::string db_host        = GetEnv("FS_DB_HOST", "127.0.0.1");
+    const int         db_port        = GetEnvInt("FS_DB_PORT", 3306);
+    const std::string db_user        = GetEnv("FS_DB_USER", "root");
+    const std::string db_pass        = GetEnv("FS_DB_PASS", "123456");
+    const std::string db_name        = GetEnv("FS_DB_NAME", "fileserver");
+    const std::string zk_hosts       = GetEnv("FS_ZK_HOSTS", "127.0.0.1:2181");
+    const std::string storage        = GetEnv("FS_STORAGE_ROOT", "./storage/data");
+    // 注册到 ZooKeeper 的地址：容器/多机部署时必须设置成本机可达地址
+    const std::string advertise_host = GetEnv("FS_ADVERTISE_HOST", "127.0.0.1");
 
     // ── 数据库 + 存储 ───────────────────────────────────────────
-    database::MysqlPool pool(db_host, 3306, db_user, db_pass, db_name, 4);
+    database::MysqlPool pool(db_host, db_port, db_user, db_pass, db_name, 4);
     database::FileDAO file_dao(&pool);
     storage::StorageManager st(storage);
     services::FileService file_svc(&file_dao, &st);
@@ -101,10 +106,10 @@ int main() {
     // ── ZooKeeper 注册 ──────────────────────────────────────────
     rpc::ZkClient zk(zk_hosts);
     if (zk.Connect()) {
-        zk.Register("/FileServer/FileService", "127.0.0.1", 9002);
+        zk.Register("/FileServer/FileService", advertise_host, 9002);
     }
 
-    std::cout << "\nFileService 已启动, RPC=9002\n\n";
+    std::cout << "\nFileService 已启动, RPC=" << advertise_host << ":9002\n\n";
     loop.loop();
     return 0;
 }

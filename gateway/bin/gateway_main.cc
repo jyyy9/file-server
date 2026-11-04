@@ -111,8 +111,9 @@ static int64_t VerifyToken(ServiceDiscovery& sd, const std::string& token) {
 int main() {
     Logger::Instance().SetLevel(LogLevel::kDebug);
 
-    // ── ZooKeeper ───────────────────────────────────────────────
-    rpc::ZkClient zk("127.0.0.1:2181");
+    // ── ZooKeeper（环境变量优先，未设置时用默认值）──────────────
+    const std::string zk_hosts = GetEnv("FS_ZK_HOSTS", "127.0.0.1:2181");
+    rpc::ZkClient zk(zk_hosts);
     if (!zk.Connect()) {
         LOG_WARNING("ZooKeeper 连接失败，使用默认地址");
     }
