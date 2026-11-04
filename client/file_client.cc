@@ -4,6 +4,7 @@
 #include <thread>
 #include <fstream>
 #include <cstdio>
+#include <sys/stat.h>
 #include <openssl/evp.h>
 
 namespace fileserver {
@@ -300,8 +301,21 @@ ClientResponse FileClient::DownloadFile(const std::string& token,
     int64_t filesize = info_resp.data.value("filesize", 0LL);
     if (filesize == 0) return {-1, "文件不存在", {}, {}};
 
-    // 3. 分块下载
-    std::ofstream out(save_path, std::ios::binary);
+    // 3. 解析保存路径：若目标是已存在的目录，自动拼接服务端返回的文件名
+    std::string target = save_path;
+    std::string filename = info_resp.data.value("filename", "");
+    struct stat st;
+    if (::stat(save_path.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+        if (filename.empty()) return {-1, "保存路径是目录，无法确定文件名", {}, {}};
+        if (!target.empty() && target.back() != '/') target += '/';
+        target += filename;
+    }
+
+    // 4. 分块下载
+    std::ofstream out(target, std::ios::binary);
+    if (!out.is_open())
+        return {-1, "无法创建文件: " + target, {}, {}};
+
     int64_t offset = 0;
     const int64_t kChunkSize = 4 * 1024 * 1024;
 
@@ -325,7 +339,10 @@ ClientResponse FileClient::DownloadFile(const std::string& token,
     }
 
     out.close();
-    return {0, "ok", {{"filesize", filesize}}, {}};
+    if (out.fail() || offset != filesize)
+        return {-1, "写入文件失败: " + target, {}, {}};
+
+    return {0, "ok", {{"filesize", filesize}, {"path", target}}, {}};
 }
 
 }  // namespace client

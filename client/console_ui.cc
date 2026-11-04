@@ -8,6 +8,28 @@
 namespace fileserver {
 namespace client {
 
+namespace {
+
+// 按大小自动选择 B / KB / MB / GB 并保留小数。
+// 不能直接 >> 20：整数截断会把 512KB 显示成 0MB。
+std::string FormatSize(int64_t bytes) {
+    std::ostringstream oss;
+    if (bytes < 1024) {
+        oss << bytes << " B";
+    } else if (bytes < 1024 * 1024) {
+        oss << std::fixed << std::setprecision(1) << (bytes / 1024.0) << " KB";
+    } else if (bytes < 1024LL * 1024 * 1024) {
+        oss << std::fixed << std::setprecision(2)
+            << (bytes / (1024.0 * 1024)) << " MB";
+    } else {
+        oss << std::fixed << std::setprecision(2)
+            << (bytes / (1024.0 * 1024 * 1024)) << " GB";
+    }
+    return oss.str();
+}
+
+}  // namespace
+
 ConsoleUI::ConsoleUI(const std::string& host, int port)
     : host_(host), port_(port) {}
 
@@ -64,7 +86,7 @@ void ConsoleUI::ShowProgress(const char* label, int64_t done, int64_t total) {
     for (int i = 0; i < bar_len; ++i)
         std::cout << (i < filled ? "█" : "░");
     std::cout << "] " << std::setw(3) << pct << "%  ("
-              << (done >> 20) << "MB / " << (total >> 20) << "MB)"
+              << FormatSize(done) << " / " << FormatSize(total) << ")"
               << std::flush;
 }
 
@@ -123,7 +145,7 @@ void ConsoleUI::DoListFiles() {
         for (auto& f : resp.data["files"]) {
             std::cout << "  " << std::setw(4) << f["id"]
                       << "  " << std::setw(20) << f["filename"].get<std::string>().substr(0,20)
-                      << "  " << std::setw(8) << (f["filesize"].get<int64_t>() >> 20) << " MB"
+                      << "  " << std::setw(10) << FormatSize(f["filesize"].get<int64_t>())
                       << "  " << (f["status"].get<int>() == 1 ? "完成" : "上传中")
                       << std::endl;
         }
@@ -169,8 +191,8 @@ void ConsoleUI::DoResumeUpload() {
     int64_t offset  = start_resp.data.value("offset", 0LL);
 
     if (offset > 0) {
-        std::cout << "检测到未完成任务, 从 " << (offset >> 20)
-                  << "MB 处继续上传" << std::endl;
+        std::cout << "检测到未完成任务, 从 " << FormatSize(offset)
+                  << " 处继续上传" << std::endl;
     }
 
     // 继续上传
