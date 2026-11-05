@@ -36,6 +36,8 @@ public:
     // 更新上传进度
     bool UpdateUploadSize(int64_t file_id, int64_t upload_size);
 
+    bool ConfirmUploadChunk(int64_t file_id, int64_t user_id, int64_t offset, int64_t size);
+
     // 更新文件状态
     bool UpdateStatus(int64_t file_id, int32_t status);
 

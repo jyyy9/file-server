@@ -34,6 +34,10 @@ void RpcServer::RegisterMethod(const std::string& name,
     LOG_INFO("RPC方法注册: " + service_name_ + "." + name);
 }
 
+void RpcServer::RegisterBinaryMethod(const std::string& name, const BinaryRpcMethod& method) {
+    binary_methods_[name] = method;
+}
+
 void RpcServer::Start() {
     server_.start();
     LOG_INFO("RpcServer 启动: " + service_name_);
@@ -74,7 +78,14 @@ void RpcServer::OnMessage(const muduo::net::TcpConnectionPtr& conn,
         worker_pool_.Submit([this, conn, method, msg]() {
             nlohmann::json result;
             auto it = methods_.find(method);
-            if (it != methods_.end()) {
+            auto binary_it = binary_methods_.find(method);
+            if (binary_it != binary_methods_.end()) {
+                try {
+                    result = binary_it->second(msg.GetJson(), msg.binary_data);
+                } catch (const std::exception& e) {
+                    result = {{"code", -1}, {"msg", e.what()}};
+                }
+            } else if (it != methods_.end()) {
                 try {
                     result = it->second(msg.GetJson());
                 } catch (const std::exception& e) {

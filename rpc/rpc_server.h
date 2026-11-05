@@ -53,6 +53,10 @@ public:
     // ── 方法注册 ─────────────────────────────────────────────────
     void RegisterMethod(const std::string& name, const RpcMethod& method);
 
+    using BinaryRpcMethod = std::function<nlohmann::json(
+        const nlohmann::json&, const std::string&)>;
+    void RegisterBinaryMethod(const std::string& name, const BinaryRpcMethod& method);
+
     // ── 启动 ─────────────────────────────────────────────────────
     void Start();
 
@@ -68,6 +72,7 @@ private:
     muduo::net::TcpServer server_;
     ThreadPool worker_pool_;
     std::unordered_map<std::string, RpcMethod> methods_;
+    std::unordered_map<std::string, BinaryRpcMethod> binary_methods_;
     std::unordered_map<const void*, std::shared_ptr<protocol::Decoder>> decoders_;
     std::mutex decoder_mutex_;
 };

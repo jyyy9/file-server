@@ -195,6 +195,32 @@ bool FileDAO::UpdateUploadSize(int64_t file_id, int64_t upload_size) {
     return ok;
 }
 
+// Confirm only a contiguous prefix. A retry of an already confirmed range is safe.
+bool FileDAO::ConfirmUploadChunk(int64_t file_id, int64_t user_id,
+                                int64_t offset, int64_t size) {
+    auto conn = pool_->GetConnection();
+    if (!conn) return false;
+    const char* sql = "UPDATE file_info SET upload_size = ? "
+        "WHERE id = ? AND user_id = ? AND status = 0 AND upload_size = ? AND filesize >= ?";
+    MYSQL_STMT* stmt = mysql_stmt_init(conn.get());
+    if (!stmt) return false;
+    int64_t end = offset + size;
+    MYSQL_BIND bind[5] = {};
+    int64_t values[] = {end, file_id, user_id, offset, end};
+    for (int i = 0; i < 5; ++i) {
+        bind[i].buffer_type = MYSQL_TYPE_LONGLONG;
+        bind[i].buffer = &values[i];
+    }
+    bool ok = mysql_stmt_prepare(stmt, sql, std::strlen(sql)) == 0 &&
+              mysql_stmt_bind_param(stmt, bind) == 0 && mysql_stmt_execute(stmt) == 0;
+    bool changed = ok && mysql_stmt_affected_rows(stmt) == 1;
+    mysql_stmt_close(stmt);
+    if (changed) return true;
+    if (!ok) return false;
+    auto info = FindById(file_id);
+    return info && info->user_id == user_id && info->IsUploading() && info->upload_size >= end;
+}
+
 // ── 更新状态 ─────────────────────────────────────────────────────
 bool FileDAO::UpdateStatus(int64_t file_id, int32_t status) {
     auto conn = pool_->GetConnection();
