@@ -35,3 +35,7 @@ core
 # ── 其他 ──────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db
+# Python distributed prototype
+__pycache__/
+*.pyc
+.distributed-local/
