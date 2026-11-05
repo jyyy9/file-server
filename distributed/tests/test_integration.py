@@ -196,4 +196,52 @@ class Cluster(unittest.TestCase):
         self.assertFalse((self.root/'must-not-exist').exists())
         self.stop('file');self.start('file')
 
+    def test_08_capacity_cancel_expire(self):
+        with transaction() as db:
+            before=db.q('SELECT SUM(reserved) FROM ds_nodes')[0][0]
+        u=self.init(b'x'*8192)
+        self.client.request('cancel',upload_id=u['upload_id'])
+        with transaction() as db:
+            self.assertEqual(db.q('SELECT SUM(reserved) FROM ds_nodes')[0][0],before)
+        u=self.init(b'x')
+        with transaction() as db:
+            db.q('UPDATE ds_uploads SET expires=? WHERE upload_id=?',time.time()-1,u['upload_id'])
+        with self.assertRaises(Error):self.upload_chunk(u,0,b'x')
+        deadline=time.time()+5
+        while time.time()<deadline:
+            with transaction() as db:
+                state=db.q('SELECT state FROM ds_uploads WHERE upload_id=?',u['upload_id'])[0][0]
+            if state=='expired':break
+            time.sleep(.2)
+        self.assertEqual(state,'expired')
+
+    def test_09_duplicate_instance_and_length(self):
+        import uuid
+        from distributed.wire import HEADER,receive
+        with transaction() as db:
+            nid,volume=db.q('SELECT node_id,volume FROM ds_nodes LIMIT 1')[0]
+        with self.assertRaises(Error) as err:
+            call(self.file,dict(cmd='heartbeat',service_key=SECRET,node_id=nid,instance=uuid.uuid4().hex,volume=volume,capacity=1048576,free_bytes=1048576))
+        self.assertEqual(err.exception.code,'DUPLICATE')
+        with socket.create_connection(('127.0.0.1',int(self.gateway.split(':')[1]))) as sock:
+            sock.sendall(HEADER.pack(0x4D46,1,1,0xffffffff,0xffffffff,1,0))
+            result,_,_=receive(sock)
+        self.assertEqual(result['code'],'LIMIT')
+
+    def test_10_delete_task_restart(self):
+        u=self.init(b'task-restart');self.upload_chunk(u,0,b'task-restart')
+        self.client.request('delete',object_id=u['object_id'])
+        self.stop('file')
+        with transaction() as db:
+            db.q("UPDATE ds_tasks t JOIN ds_chunks c ON c.chunk_id=t.chunk_id SET t.state='running',t.lease=?,t.token='abandoned' WHERE c.upload_id=? AND t.kind='delete'",time.time()-1,u['upload_id'])
+        self.start('file')
+        deadline=time.time()+6
+        while time.time()<deadline:
+            with transaction() as db:
+                pending=db.q("SELECT COUNT(*) FROM ds_tasks t JOIN ds_chunks c ON c.chunk_id=t.chunk_id WHERE c.upload_id=? AND t.kind='delete' AND t.state<>'done'",u['upload_id'])[0][0]
+            if pending=='0':break
+            time.sleep(.2)
+        self.assertEqual(pending,'0')
+        with self.assertRaises(Error):self.client.request('complete',upload_id=u['upload_id'])
+
 if __name__=='__main__':unittest.main(verbosity=2)

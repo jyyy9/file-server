@@ -299,3 +299,9 @@ sudo /usr/share/zookeeper/bin/zkServer.sh start
 - **禁止整文件加载到内存**: 按 4MB chunk 流式读写
 - **控制面与数据面分离**: 元数据走 RPC, 大文件 chunk 走直连 TCP
 - **路径规则**: `{root}/{user_id}/{YYYYMMDD}_{HHmmss}_{sanitized_name}`
+
+## 新增：分布式对象存储原型
+
+独立模式位于 `distributed/`，保留原 C++ 单体及微服务模式、旧表和数据。提供 FileService + MySQL、三节点双副本、不可变分片、续传、校验下载和后台任务。新模式使用 Python 标准库及系统 libmysqlclient，继续使用现有 Header + JSON + Binary 协议。
+
+部署、迁移、接口、状态机、演示和已验证/未验证范围见 [分布式模式文档](docs/distributed.md)。主要验收入口为 `scripts/test-distributed.sh`，必须使用独立空的 `ds_test_*` 数据库。当前尚未完成全部故障与旧模式数据库回归验收，详见验证记录。

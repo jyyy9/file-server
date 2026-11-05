@@ -1,0 +1,61 @@
+x-common: &common
+  build:
+    context: ..
+    dockerfile: distributed/Dockerfile
+  environment: &environment
+    DS_SERVICE_KEY: ${DS_SERVICE_KEY:?set DS_SERVICE_KEY (24+ characters)}
+    DS_USERS: ${DS_USERS:?set DS_USERS JSON with user tokens}
+    FS_DB_HOST: mysql
+    FS_DB_USER: objectstore
+    FS_DB_PASS: ${DS_DB_PASSWORD:?set DS_DB_PASSWORD}
+    FS_DB_NAME: objectstore
+    DS_NODES: '{"n1":"node1:9101","n2":"node2:9102","n3":"node3:9103"}'
+    DS_FILE_ADDRESS: fileservice:9200
+    DS_GATEWAY_ADDRESS: gateway:9300
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_DATABASE: objectstore
+      MYSQL_USER: objectstore
+      MYSQL_PASSWORD: ${DS_DB_PASSWORD:?set DS_DB_PASSWORD}
+      MYSQL_RANDOM_ROOT_PASSWORD: 'yes'
+    volumes: ["mysql-data:/var/lib/mysql"]
+    healthcheck:
+      test: [CMD-SHELL, 'MYSQL_PWD="$$MYSQL_PASSWORD" mysql -h 127.0.0.1 -u objectstore -D objectstore -e "SELECT 1"']
+      interval: 3s
+      timeout: 3s
+      retries: 40
+  migrate:
+    <<: *common
+    depends_on:
+      mysql:
+        condition: service_healthy
+    command: python3 -m distributed.migrate
+  fileservice:
+    <<: *common
+    command: python3 -m distributed.run file
+  gateway:
+    <<: *common
+    command: python3 -m distributed.run gateway
+    ports: ["127.0.0.1:9300:9300"]
+  node1:
+    <<: *common
+    command: python3 -m distributed.run node --node-id n1 --root /data
+    volumes: ["node1-data:/data"]
+  node2:
+    <<: *common
+    command: python3 -m distributed.run node --node-id n2 --root /data
+    volumes: ["node2-data:/data"]
+  node3:
+    <<: *common
+    command: python3 -m distributed.run node --node-id n3 --root /data
+    volumes: ["node3-data:/data"]
+volumes:
+  mysql-data:
+  node1-data:
+  node2-data:
+  node3-data:
