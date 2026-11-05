@@ -7,7 +7,7 @@ class Config:
         self.secret = os.environ.get('DS_SERVICE_KEY', '')
         require(len(self.secret) >= 24, 'CONFIG', 'DS_SERVICE_KEY must contain at least 24 characters')
         self.users = json.loads(os.environ.get('DS_USERS', '{}'))
-        require(isinstance(self.users, dict) and all(isinstance(k, str) and k and isinstance(v, str) and len(v) >= 24 for k, v in self.users.items()), 'CONFIG', 'invalid DS_USERS')
+        require(isinstance(self.users, dict) and all(isinstance(k, str) and 0<len(k)<=64 and isinstance(v, str) and len(v) >= 24 for k, v in self.users.items()), 'CONFIG', 'invalid DS_USERS')
         self.nodes = json.loads(os.environ.get('DS_NODES', '{"n1":"127.0.0.1:9101","n2":"127.0.0.1:9102","n3":"127.0.0.1:9103"}'))
         require(len(self.nodes) >= 2 and len(set(self.nodes.values())) == len(self.nodes), 'CONFIG', 'distinct nodes required')
         self.chunk = self.number('DS_CHUNK_SIZE', 4*1024*1024, 1, 4*1024*1024)

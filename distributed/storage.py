@@ -82,6 +82,7 @@ class Storage:
                         ID.fullmatch(claims['upload_id']), 'AUTH', 'wrong write target')
                 require(len(data) == claims['length'] and digest(data) == claims['sha256'], 'CHECKSUM', 'content mismatch')
                 if path.exists():
+                    require(path.stat().st_size == len(data), 'CONFLICT', 'immutable chunk length conflict')
                     existing = path.read_bytes()
                     require(len(existing) == len(data) and digest(existing) == claims['sha256'], 'CONFLICT', 'immutable chunk conflict')
                     # Retry also synchronizes directory after an uncertain prior publication.

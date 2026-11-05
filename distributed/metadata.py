@@ -278,10 +278,11 @@ class Metadata:
                         pass
                     with transaction() as db:
                         db.q('SELECT id FROM ds_allocator WHERE id=1 FOR UPDATE')
+                        old_volume=db.q('SELECT volume FROM ds_replicas WHERE chunk_id=? AND node_id=?',cid,nid)[0][0]
                         current=db.q('SELECT volume,instance FROM ds_nodes WHERE node_id=?',nid)[0]
                         if current!=(volume,instance): continue
                         db.q("UPDATE ds_replicas SET state=?,volume=? WHERE chunk_id=? AND node_id=? AND state='unverified'",'valid' if valid else 'bad',volume,cid,nid)
-                        if not valid:
+                        if not valid and old_volume!=volume:
                             # Replacement volume contains no old charged data.
                             self.uncharge(db,cid,nid,length)
                 cursor=''

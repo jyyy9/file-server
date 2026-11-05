@@ -8,7 +8,7 @@ import ctypes.util
 import os
 from contextlib import contextmanager
 
-lib = C.CDLL(ctypes.util.find_library('mysqlclient'))
+lib = C.CDLL(ctypes.util.find_library('mysqlclient') or ctypes.util.find_library('mariadb'))
 for name, args, result in [
     ('mysql_init', [C.c_void_p], C.c_void_p),
     ('mysql_real_connect', [C.c_void_p, C.c_char_p, C.c_char_p, C.c_char_p, C.c_char_p, C.c_uint, C.c_char_p, C.c_ulong], C.c_void_p),

@@ -12,6 +12,9 @@ def main():
             sql = '\n'.join(line for line in path.read_text().splitlines() if not line.lstrip().startswith('--'))
             for statement in sql.split(';'):
                 if statement.strip():
+                    # MySQL DDL auto-commits: allow restart after ALTER succeeded but version insert did not.
+                    if 'ALTER TABLE ds_replicas ADD COLUMN charged' in statement and db.q("SHOW COLUMNS FROM ds_replicas LIKE 'charged'"):
+                        continue
                     db.q(statement)
             print('applied', path.name)
     finally:
