@@ -55,6 +55,7 @@ class Storage:
                 os.fsync(out.fileno())
             syncdir(self.root)
         self.locks = [threading.Lock() for _ in range(64)]
+        self.capacity_lock = threading.Lock()
         self.faults = faults or set()
         for path in self.root.glob('.tmp-*'):
             path.unlink()
@@ -73,7 +74,7 @@ class Storage:
         cid = req.get('chunk_id', '')
         require(isinstance(cid, str) and ID.fullmatch(cid), 'INVALID', 'invalid chunk ID')
         path = self.root / cid
-        with self.locks[int(cid[:2], 16) % len(self.locks)]:
+        with self.capacity_lock, self.locks[int(cid[:2], 16) % len(self.locks)]:
             if cmd == 'put':
                 claims = verify(self.secret, req['authorization'])
                 require(claims['node_id'] == self.node_id and claims['chunk_id'] == cid and
@@ -122,6 +123,7 @@ class Storage:
                 require(len(content) == req['length'] and digest(content) == req['sha256'], 'CORRUPT', 'chunk checksum mismatch')
                 return {'length': len(content), 'sha256': digest(content)}, content if cmd == 'get' else b''
             if cmd == 'remove':
+                require(req.get('instance') == self.instance and req.get('volume') == self.volume, 'STALE', 'delete target changed')
                 path.unlink(missing_ok=True)
                 syncdir(self.root)
                 return {}, b''

@@ -4,7 +4,7 @@ import re
 import time
 import uuid
 from .db import transaction
-from .storage import ticket
+from .storage import ticket, digest
 from .wire import Error, require, call
 
 
@@ -23,8 +23,8 @@ class Metadata:
         require(rows, 'NOT_FOUND', 'upload not found')
         row = rows[0]
         require(owner is None or row[3] == owner, 'FORBIDDEN', 'object belongs to another user')
-        require(row[7] != 'deleted', 'DELETED', 'object deleted')
         if writing:
+            require(row[7] != 'deleted', 'DELETED', 'object deleted')
             require(row[1] == 'uploading' and float(row[2]) > time.time(), 'EXPIRED', 'upload not active')
         return row
 
@@ -48,7 +48,7 @@ class Metadata:
                 continue
             if min(int(capacity)-int(used)-int(reserved), int(free)-int(reserved)) < length:
                 continue
-            db.q("INSERT INTO ds_replicas VALUES(?,?,?,'reserved') ON DUPLICATE KEY UPDATE volume=VALUES(volume),state='reserved'", cid, nid, volume)
+            db.q("INSERT INTO ds_replicas(chunk_id,node_id,volume,state,charged) VALUES(?,?,?,'reserved','reserved') ON DUPLICATE KEY UPDATE volume=VALUES(volume),state='reserved',charged='reserved'", cid, nid, volume)
             db.q('UPDATE ds_nodes SET reserved=reserved+? WHERE node_id=?', length, nid)
             chosen.append(nid)
             if len(chosen) == count:
@@ -57,7 +57,7 @@ class Metadata:
         return chosen
 
     def positions(self, db, cid, upload, length, sha):
-        rows = db.q("SELECT n.node_id,n.address,n.volume,n.instance,n.heartbeat,n.state,r.state FROM ds_replicas r JOIN ds_nodes n ON n.node_id=r.node_id WHERE r.chunk_id=? AND r.volume=n.volume AND r.state IN ('reserved','valid')", cid)
+        rows = db.q("SELECT n.node_id,n.address,n.volume,n.instance,n.heartbeat,n.state,r.state FROM ds_replicas r JOIN ds_nodes n ON n.node_id=r.node_id WHERE r.chunk_id=? AND r.volume=n.volume AND r.state IN ('reserved','valid') ORDER BY n.node_id", cid)
         result = []
         for nid, address, volume, instance, heartbeat, health, state in rows:
             require(health == 'healthy' and time.time()-float(heartbeat) < self.c.suspect, 'UNAVAILABLE', 'assigned node unavailable; retry after recovery')
@@ -193,97 +193,219 @@ class Metadata:
                 nid = position['node_id']
                 replica = db.q('SELECT state FROM ds_replicas WHERE chunk_id=? AND node_id=? FOR UPDATE', cid, nid)[0][0]
                 if replica == 'reserved':
-                    db.q("UPDATE ds_replicas SET state='valid' WHERE chunk_id=? AND node_id=?", cid, nid)
+                    db.q("UPDATE ds_replicas SET state='valid',charged='used' WHERE chunk_id=? AND node_id=?", cid, nid)
                     db.q('UPDATE ds_nodes SET reserved=reserved-?,used_bytes=used_bytes+? WHERE node_id=?', int(length), int(length), nid)
             db.q("UPDATE ds_chunks SET state='confirmed' WHERE chunk_id=?", cid)
             progress = int(db.q("SELECT COALESCE(SUM(length),0) FROM ds_chunks WHERE upload_id=? AND state='confirmed'", req['upload_id'])[0][0])
         return {'confirmed_bytes': progress}
 
     @staticmethod
-    def enqueue(db, kind, cid, nid=''):
-        # Completed cleanup can be reopened by a later inventory; repairing tasks deduplicate.
-        db.q("INSERT INTO ds_tasks(kind,chunk_id,node_id) VALUES(?,?,?) ON DUPLICATE KEY UPDATE state=IF(state='done','pending',state),lease=IF(state='done',0,lease)", kind, cid, nid)
+    def enqueue(db, kind, cid, nid='', delay=0):
+        db.q("INSERT INTO ds_tasks(kind,chunk_id,node_id,lease) VALUES(?,?,?,?) ON DUPLICATE KEY UPDATE lease=IF(state='done',VALUES(lease),lease),state=IF(state='done','pending',state)", kind,cid,nid,time.time()+delay if delay else 0)
+
+    def uncharge(self, db, cid, nid, length):
+        row = db.q('SELECT charged FROM ds_replicas WHERE chunk_id=? AND node_id=? FOR UPDATE',cid,nid)
+        if row and row[0][0] in ('reserved','used'):
+            column = 'reserved' if row[0][0]=='reserved' else 'used_bytes'
+            db.q('UPDATE ds_nodes SET '+column+'='+column+'-? WHERE node_id=?',int(length),nid)
+            db.q("UPDATE ds_replicas SET charged='none' WHERE chunk_id=? AND node_id=?",cid,nid)
 
     def retire(self, db, upload, state):
         db.q('UPDATE ds_uploads SET state=? WHERE upload_id=?', state, upload)
         db.q("UPDATE ds_objects SET state='deleted' WHERE object_id=(SELECT object_id FROM ds_uploads WHERE upload_id=?)", upload)
-        rows = db.q('SELECT r.chunk_id,r.node_id,r.state,c.length FROM ds_replicas r JOIN ds_chunks c ON c.chunk_id=r.chunk_id WHERE c.upload_id=? FOR UPDATE', upload)
-        for cid,nid,rstate,length in rows:
-            if rstate == 'reserved':
-                db.q('UPDATE ds_nodes SET reserved=reserved-? WHERE node_id=?', int(length), nid)
-            # Used accounting stays until deletion ACK (bad replicas also occupy space).
-            if rstate not in ('deleting','gone'):
-                db.q("UPDATE ds_replicas SET state='deleting' WHERE chunk_id=? AND node_id=?", cid,nid)
-            self.enqueue(db, 'delete', cid,nid)
-        # A cleanup grace exceeds any write authorization and bounded request duration.
-        db.q("UPDATE ds_tasks t JOIN ds_chunks c ON c.chunk_id=t.chunk_id SET t.lease=GREATEST(t.lease,?) WHERE c.upload_id=? AND t.kind='delete'", time.time()+self.c.auth_ttl+20, upload)
+        rows = db.q('SELECT r.chunk_id,r.node_id,r.charged,c.length FROM ds_replicas r JOIN ds_chunks c ON c.chunk_id=r.chunk_id WHERE c.upload_id=? FOR UPDATE', upload)
+        for cid,nid,charge,length in rows:
+            if charge=='reserved':
+                self.uncharge(db,cid,nid,length)
+            db.q("UPDATE ds_replicas SET state='deleting' WHERE chunk_id=? AND node_id=? AND state<>'gone'",cid,nid)
+            self.enqueue(db,'delete',cid,nid,self.c.auth_ttl+30)
+        # Fence outstanding repair publishers before any cleanup can start.
+        db.q("UPDATE ds_tasks t JOIN ds_chunks c ON c.chunk_id=t.chunk_id SET t.state='done',t.token='',t.lease=0 WHERE c.upload_id=? AND t.kind='repair'",upload)
 
     def heartbeat(self, req):
         nid = req.get('node_id')
         require(nid in self.c.nodes, 'INVALID', 'unconfigured node')
         instance, volume = req.get('instance'), req.get('volume')
-        require(all(isinstance(x, str) and re.fullmatch('[a-f0-9]{32}', x) for x in (instance,volume)))
-        capacity, free = req.get('capacity'), req.get('free_bytes')
-        require(type(capacity) is int and type(free) is int and 0 <= free <= capacity <= 2**60)
-        now = time.time()
+        require(all(isinstance(x,str) and re.fullmatch('[a-f0-9]{32}',x) for x in (instance,volume)))
+        capacity, free = req.get('capacity'),req.get('free_bytes')
+        require(type(capacity) is int and type(free) is int and 0<=free<=capacity<=2**60)
+        now=time.time()
         with transaction() as db:
             db.q('SELECT id FROM ds_allocator WHERE id=1 FOR UPDATE')
-            rows = db.q('SELECT instance,volume,heartbeat FROM ds_nodes WHERE node_id=? FOR UPDATE', nid)
-            if rows and rows[0][0] != instance:
-                require(not db.q('SELECT instance FROM ds_instances WHERE node_id=? AND instance=?', nid, instance), 'STALE', 'retired instance')
-                require(now-float(rows[0][2]) >= self.c.dead, 'DUPLICATE', 'node already has live instance')
-                db.q('INSERT IGNORE INTO ds_instances VALUES(?,?)', nid, rows[0][0])
-            changed = bool(rows and (rows[0][0] != instance or rows[0][1] != volume))
-            db.q("INSERT INTO ds_nodes(node_id,address,instance,volume,heartbeat,capacity,free_bytes,state) VALUES(?,?,?,?,?,?,?,'healthy') ON DUPLICATE KEY UPDATE address=VALUES(address),instance=VALUES(instance),volume=VALUES(volume),heartbeat=VALUES(heartbeat),capacity=VALUES(capacity),free_bytes=VALUES(free_bytes),state='healthy'", nid,self.c.nodes[nid],instance,volume,now,capacity,free)
+            rows=db.q('SELECT instance,volume,heartbeat FROM ds_nodes WHERE node_id=? FOR UPDATE',nid)
+            if rows and rows[0][0]!=instance:
+                require(not db.q('SELECT instance FROM ds_instances WHERE node_id=? AND instance=?',nid,instance),'STALE','retired instance')
+                require(now-float(rows[0][2])>=self.c.dead,'DUPLICATE','node already has live instance')
+                db.q('INSERT IGNORE INTO ds_instances VALUES(?,?)',nid,rows[0][0])
+            changed=bool(rows and (rows[0][0]!=instance or rows[0][1]!=volume))
+            db.q("INSERT INTO ds_nodes(node_id,address,instance,volume,heartbeat,capacity,free_bytes,state) VALUES(?,?,?,?,?,?,?,'healthy') ON DUPLICATE KEY UPDATE address=VALUES(address),instance=VALUES(instance),volume=VALUES(volume),heartbeat=VALUES(heartbeat),capacity=VALUES(capacity),free_bytes=VALUES(free_bytes),state='healthy'",nid,self.c.nodes[nid],instance,volume,now,capacity,free)
             if changed:
-                # Never trust node_id alone: every old valid copy requires physical verification.
-                db.q("UPDATE ds_replicas SET state='unverified' WHERE node_id=? AND state IN ('valid','bad')", nid)
-        return {'instance': instance}
+                db.q("UPDATE ds_replicas SET state='unverified' WHERE node_id=? AND state IN ('valid','bad')",nid)
+                # Upload reservations survive process/volume restart, but valid copies require stat.
+                db.q("UPDATE ds_replicas SET volume=? WHERE node_id=? AND state='reserved'",volume,nid)
+        return {'instance':instance}
+
+    def healthy(self, db, cid):
+        return db.q("SELECT n.node_id,n.address,n.volume,n.instance FROM ds_replicas r JOIN ds_nodes n ON n.node_id=r.node_id WHERE r.chunk_id=? AND r.state='valid' AND r.volume=n.volume AND n.state='healthy' AND n.heartbeat>? ORDER BY n.node_id",cid,time.time()-self.c.suspect)
+
+    def maintain(self):
+        with transaction() as db:
+            db.q('SELECT id FROM ds_allocator WHERE id=1 FOR UPDATE')
+            db.q("UPDATE ds_nodes SET state=CASE WHEN heartbeat<? THEN 'unavailable' WHEN heartbeat<? THEN 'suspect' ELSE 'healthy' END",time.time()-self.c.dead,time.time()-self.c.suspect)
+            expired=db.q("SELECT upload_id FROM ds_uploads WHERE state='uploading' AND expires<? LIMIT 32 FOR UPDATE",time.time())
+            for (upload,) in expired:
+                self.retire(db,upload,'expired')
+            chunks=db.q("SELECT c.chunk_id,o.replicas FROM ds_chunks c JOIN ds_uploads u ON u.upload_id=c.upload_id JOIN ds_objects o ON o.object_id=u.object_id WHERE o.state='published' ORDER BY c.chunk_id")
+            for cid,required in chunks:
+                if len(self.healthy(db,cid))<int(required):
+                    self.enqueue(db,'repair',cid)
+        self.reconcile()
+
+    def reconcile(self):
+        # Paginated inventory and stat validate a recovered process/volume. No network in transactions.
+        with transaction() as db:
+            nodes=db.q("SELECT node_id,address,volume,instance FROM ds_nodes WHERE state='healthy' AND heartbeat>?",time.time()-self.c.suspect)
+        for nid,address,volume,instance in nodes:
+            try:
+                with transaction() as db:
+                    checks=db.q("SELECT r.chunk_id,c.length,c.sha256 FROM ds_replicas r JOIN ds_chunks c ON c.chunk_id=r.chunk_id WHERE r.node_id=? AND r.state='unverified' LIMIT 128",nid)
+                for cid,length,sha in checks:
+                    valid=False
+                    try:
+                        call(address,dict(cmd='stat',service_key=self.c.secret,chunk_id=cid,length=int(length),sha256=sha))
+                        valid=True
+                    except (Error,OSError):
+                        pass
+                    with transaction() as db:
+                        db.q('SELECT id FROM ds_allocator WHERE id=1 FOR UPDATE')
+                        current=db.q('SELECT volume,instance FROM ds_nodes WHERE node_id=?',nid)[0]
+                        if current!=(volume,instance): continue
+                        db.q("UPDATE ds_replicas SET state=?,volume=? WHERE chunk_id=? AND node_id=? AND state='unverified'",'valid' if valid else 'bad',volume,cid,nid)
+                        if not valid:
+                            # Replacement volume contains no old charged data.
+                            self.uncharge(db,cid,nid,length)
+                cursor=''
+                while True:
+                    inventory,_=call(address,dict(cmd='inventory',service_key=self.c.secret,cursor=cursor))
+                    for cid in inventory['ids']:
+                        with transaction() as db:
+                            db.q('SELECT id FROM ds_allocator WHERE id=1 FOR UPDATE')
+                            rows=db.q('SELECT o.state,u.state,u.expires,c.length FROM ds_chunks c JOIN ds_uploads u ON u.upload_id=c.upload_id JOIN ds_objects o ON o.object_id=u.object_id WHERE c.chunk_id=?',cid)
+                            replica=db.q('SELECT state,volume FROM ds_replicas WHERE chunk_id=? AND node_id=?',cid,nid)
+                            if not rows or rows[0][0]=='deleted':
+                                self.enqueue(db,'delete',cid,nid,self.c.auth_ttl+30)
+                            elif replica and replica[0][0] in ('reserved','valid','unverified') and replica[0][1]==volume:
+                                continue
+                            elif rows[0][0]=='published':
+                                required=int(db.q('SELECT o.replicas FROM ds_objects o JOIN ds_uploads u ON u.object_id=o.object_id JOIN ds_chunks c ON c.upload_id=u.upload_id WHERE c.chunk_id=?',cid)[0][0])
+                                if len(self.healthy(db,cid))>=required:
+                                    self.enqueue(db,'delete',cid,nid,self.c.auth_ttl+30)
+                    if not inventory['more']: break
+                    cursor=inventory['ids'][-1]
+            except (Error,OSError):
+                continue
+
+    def claim(self):
+        with transaction() as db:
+            db.q('SELECT id FROM ds_allocator WHERE id=1 FOR UPDATE')
+            rows=db.q("SELECT task_id,kind,chunk_id,node_id FROM ds_tasks WHERE state IN ('pending','running') AND lease<? ORDER BY lease,task_id LIMIT 1 FOR UPDATE",time.time())
+            if not rows: return None
+            task,kind,cid,nid=rows[0]
+            token=ident()
+            db.q("UPDATE ds_tasks SET state='running',lease=?,token=?,attempts=attempts+1 WHERE task_id=?",time.time()+self.c.lease,token,task)
+            return task,kind,cid,nid,token
+
+    def fence(self,db,task,token):
+        require(db.q("SELECT task_id FROM ds_tasks WHERE task_id=? AND token=? AND state='running' AND lease>? FOR UPDATE",task,token,time.time()),'STALE','task lease expired or invalidated')
 
     def run_once(self):
-        """Claim one durable task. Network work is outside the claim transaction."""
-        with transaction() as db:
-            db.q('SELECT id FROM ds_allocator WHERE id=1 FOR UPDATE')
-            rows = db.q("SELECT task_id,kind,chunk_id,node_id FROM ds_tasks WHERE (state='pending' OR (state='running' AND lease<?)) AND (lease=0 OR lease<?) ORDER BY task_id LIMIT 1 FOR UPDATE", time.time(), time.time())
-            if not rows:
-                return False
-            task, kind, cid, nid = rows[0]
-            token = ident()
-            db.q("UPDATE ds_tasks SET state='running',lease=?,token=?,attempts=attempts+1 WHERE task_id=? AND (state='pending' OR lease<?)", time.time()+self.c.auth_ttl+20, token, task, time.time())
-            row = db.q('SELECT c.length,c.sha256,u.upload_id,o.object_id,o.state FROM ds_chunks c JOIN ds_uploads u ON u.upload_id=c.upload_id JOIN ds_objects o ON o.object_id=u.object_id WHERE c.chunk_id=?', cid)
-            require(row, 'NOT_FOUND', 'task chunk absent')
-            length, sha, upload, oid, object_state = row[0]
-            replicas = db.q("SELECT r.node_id,n.address,n.volume,n.instance,r.state FROM ds_replicas r JOIN ds_nodes n ON n.node_id=r.node_id WHERE r.chunk_id=? AND r.volume=n.volume", cid)
+        job=self.claim()
+        if not job: return False
+        task,kind,cid,nid,token=job
         try:
-            if kind == 'delete':
-                # Deletion is idempotent and only changes metadata after the node ACK.
-                for node, address, volume, instance, state in replicas:
-                    if node != nid: continue
-                    call(address, dict(cmd='remove', service_key=self.c.secret, chunk_id=cid))
-                with transaction() as db:
-                    db.q("UPDATE ds_replicas SET state='gone' WHERE chunk_id=? AND node_id=? AND state='deleting'", cid,nid)
-                    db.q("UPDATE ds_nodes n JOIN ds_chunks c ON c.chunk_id=? SET n.used_bytes=GREATEST(0,n.used_bytes-c.length) WHERE n.node_id=?", cid,nid)
-                    db.q("UPDATE ds_tasks SET state='done',lease=0 WHERE task_id=? AND token=?", task,token)
-                return True
-            # Repair: select a valid source, then reserve a distinct healthy target.
-            source = next((r for r in replicas if r[4]=='valid'), None)
-            require(source, 'DATA_UNAVAILABLE', 'no healthy source replica')
-            with transaction() as db:
-                db.q('SELECT id FROM ds_allocator WHERE id=1 FOR UPDATE')
-                require(db.q("SELECT state FROM ds_objects WHERE object_id=?", oid)[0][0] == 'published', 'DELETED', 'object no longer published')
-                targets = self.reserve(db, cid, int(length), 1, [r[0] for r in replicas])
-                target = targets[0]
-                trow = db.q('SELECT address,volume,instance FROM ds_nodes WHERE node_id=?', target)[0]
-            _, binary = call(source[1], dict(cmd='get', service_key=self.c.secret, chunk_id=cid, length=int(length), sha256=sha))
-            claims = ticket(self.c.secret, dict(upload_id=upload,chunk_id=cid,node_id=target,volume=trow[1],instance=trow[2],length=int(length),sha256=sha,expires=time.time()+self.c.auth_ttl))
-            call(trow[0], dict(cmd='put',service_key=self.c.secret,chunk_id=cid,authorization=claims), binary)
-            call(trow[0], dict(cmd='stat',service_key=self.c.secret,chunk_id=cid,length=int(length),sha256=sha))
-            with transaction() as db:
-                db.q("UPDATE ds_replicas SET state='valid' WHERE chunk_id=? AND node_id=? AND state='reserved'", cid,target)
-                db.q('UPDATE ds_nodes SET reserved=reserved-?,used_bytes=used_bytes+? WHERE node_id=?', int(length),int(length),target)
-                db.q("UPDATE ds_tasks SET state='done',lease=0 WHERE task_id=? AND token=?", task,token)
+            if kind=='delete':
+                self.delete_task(task,cid,nid,token)
+            else:
+                self.repair_task(task,cid,token)
             return True
         except Exception as exc:
             with transaction() as db:
-                db.q("UPDATE ds_tasks SET state='pending',lease=0,reason=? WHERE task_id=? AND token=?", str(exc)[:255],task,token)
+                db.q("UPDATE ds_tasks SET state='pending',lease=?,reason=? WHERE task_id=? AND token=? AND state='running'",time.time()+2,str(exc)[:255],task,token)
             return False
+
+    def delete_task(self,task,cid,nid,token):
+        with transaction() as db:
+            db.q('SELECT id FROM ds_allocator WHERE id=1 FOR UPDATE')
+            self.fence(db,task,token)
+            rows=db.q('SELECT n.address,n.instance,n.volume FROM ds_nodes n WHERE n.node_id=?',nid)
+            require(rows,'UNAVAILABLE','unknown node')
+            address,instance,volume=rows[0]
+            obj=db.q('SELECT o.state,o.replicas,c.length,u.state FROM ds_chunks c JOIN ds_uploads u ON u.upload_id=c.upload_id JOIN ds_objects o ON o.object_id=u.object_id WHERE c.chunk_id=?',cid)
+            replica=db.q('SELECT state FROM ds_replicas WHERE chunk_id=? AND node_id=?',cid,nid)
+            if obj and obj[0][0]!='deleted':
+                # Never delete active upload data, a valid replica, or a repair reservation.
+                require(obj[0][0]=='published' and (not replica or replica[0][0] not in ('valid','reserved','unverified')) and len(self.healthy(db,cid))>=int(obj[0][1]),'BUSY','replica still protected')
+            if replica:
+                db.q("UPDATE ds_replicas SET state='deleting' WHERE chunk_id=? AND node_id=?",cid,nid)
+        call(address,dict(cmd='remove',service_key=self.c.secret,chunk_id=cid,instance=instance,volume=volume))
+        with transaction() as db:
+            db.q('SELECT id FROM ds_allocator WHERE id=1 FOR UPDATE')
+            self.fence(db,task,token)
+            require(db.q('SELECT instance,volume FROM ds_nodes WHERE node_id=?',nid)[0]==(instance,volume),'STALE','node changed during deletion')
+            if obj:
+                self.uncharge(db,cid,nid,int(obj[0][2]))
+            db.q("UPDATE ds_replicas SET state='gone' WHERE chunk_id=? AND node_id=? AND state='deleting'",cid,nid)
+            db.q("UPDATE ds_tasks SET state='done',lease=0 WHERE task_id=? AND token=?",task,token)
+
+    def repair_task(self,task,cid,token):
+        with transaction() as db:
+            db.q('SELECT id FROM ds_allocator WHERE id=1 FOR UPDATE')
+            self.fence(db,task,token)
+            row=db.q('SELECT c.length,c.sha256,u.upload_id,o.object_id,o.state,o.replicas FROM ds_chunks c JOIN ds_uploads u ON u.upload_id=c.upload_id JOIN ds_objects o ON o.object_id=u.object_id WHERE c.chunk_id=?',cid)[0]
+            length,sha,upload,oid,state,required=row
+            require(state=='published','DELETED','object no longer published')
+            sources=self.healthy(db,cid)
+            if len(sources)>=int(required):
+                db.q("UPDATE ds_tasks SET state='done',lease=0 WHERE task_id=? AND token=?",task,token)
+                return
+            require(sources,'DATA_UNAVAILABLE','no healthy source replica; metadata retained')
+            replicas=db.q('SELECT node_id,state,charged FROM ds_replicas WHERE chunk_id=?',cid)
+            # Reuse a pending target after a crash instead of reserving twice.
+            pending=next((n for n,s,c in replicas if s=='reserved'),None)
+            if pending:
+                target=pending
+            else:
+                excluded=[n for n,s,c in replicas if s not in ('gone',)]
+                target=self.reserve(db,cid,int(length),1,excluded)[0]
+            trow=db.q("SELECT address,volume,instance FROM ds_nodes WHERE node_id=? AND state='healthy' AND heartbeat>?",target,time.time()-self.c.suspect)
+            require(trow,'UNAVAILABLE','repair target unavailable')
+            address,volume,instance=trow[0]
+        binary=None
+        for source in sources:
+            try:
+                _,binary=call(source[1],dict(cmd='get',service_key=self.c.secret,chunk_id=cid,length=int(length),sha256=sha))
+                require(len(binary)==int(length) and digest(binary)==sha,'CORRUPT','source invalid')
+                break
+            except (Error,OSError):
+                binary=None
+        require(binary is not None,'DATA_UNAVAILABLE','all source replicas failed verification')
+        # Fixed per-worker rate; aggregate does not exceed configured repair bandwidth.
+        time.sleep(len(binary)*self.c.repair_workers/self.c.bandwidth)
+        claims=ticket(self.c.secret,dict(upload_id=upload,chunk_id=cid,node_id=target,volume=volume,instance=instance,length=int(length),sha256=sha,expires=time.time()+self.c.auth_ttl))
+        call(address,dict(cmd='put',service_key=self.c.secret,chunk_id=cid,authorization=claims),binary)
+        call(address,dict(cmd='stat',service_key=self.c.secret,chunk_id=cid,length=int(length),sha256=sha))
+        with transaction() as db:
+            db.q('SELECT id FROM ds_allocator WHERE id=1 FOR UPDATE')
+            self.fence(db,task,token)
+            require(db.q('SELECT state FROM ds_objects WHERE object_id=? FOR UPDATE',oid)[0][0]=='published','DELETED','object deleted before repair publication')
+            require(db.q('SELECT volume,instance FROM ds_nodes WHERE node_id=?',target)[0]==(volume,instance),'STALE','target restarted')
+            replica=db.q('SELECT state,charged FROM ds_replicas WHERE chunk_id=? AND node_id=? FOR UPDATE',cid,target)[0]
+            require(replica==('reserved','reserved'),'STALE','repair reservation invalidated')
+            if len(self.healthy(db,cid))>=int(required):
+                self.uncharge(db,cid,target,length)
+                db.q("UPDATE ds_replicas SET state='bad' WHERE chunk_id=? AND node_id=?",cid,target)
+                self.enqueue(db,'delete',cid,target,self.c.auth_ttl+30)
+            else:
+                db.q("UPDATE ds_replicas SET state='valid',charged='used' WHERE chunk_id=? AND node_id=?",cid,target)
+                db.q('UPDATE ds_nodes SET reserved=reserved-?,used_bytes=used_bytes+? WHERE node_id=?',int(length),int(length),target)
+            db.q("UPDATE ds_tasks SET state='done',lease=0,reason='' WHERE task_id=? AND token=?",task,token)

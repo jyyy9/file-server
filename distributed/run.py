@@ -21,11 +21,13 @@ def main():
     elif args.role == 'file':
         service, address = Metadata(c), c.file_address
         from .worker import Worker
-        Worker(service).start()
+        if 'no_worker' not in c.faults:
+            Worker(service).start()
     else:
         if args.node_id not in c.nodes or not args.root:
             parser.error('node requires configured --node-id and independent --root')
         service = Storage(args.root, args.node_id, c.secret, c.capacity, c.faults)
+        (service.root / '.instance').write_text(service.instance)
         address = c.nodes[args.node_id]
         def heartbeats():
             while True:

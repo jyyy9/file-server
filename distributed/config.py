@@ -20,6 +20,7 @@ class Config:
         self.heartbeat = self.number('DS_HEARTBEAT_SECONDS', 1, 1, self.suspect-1)
         self.repair_workers = self.number('DS_REPAIR_WORKERS', 1, 1, 8)
         self.bandwidth = self.number('DS_REPAIR_BPS', 8*1024*1024, 1024, 1024**3)
+        self.lease = self.number('DS_TASK_LEASE', 120, 40 + (self.chunk*self.repair_workers//self.bandwidth), 86400)
         self.max_chunks = self.number('DS_MAX_CHUNKS', 8192, 1, 8192)
         self.file_address = os.getenv('DS_FILE_ADDRESS', '127.0.0.1:9200')
         self.gateway_address = os.getenv('DS_GATEWAY_ADDRESS', '127.0.0.1:9300')
